@@ -39,6 +39,12 @@ for (const file of workflows) {
   const document = Bun.YAML.parse(fs.readFileSync(file, 'utf8'));
   function inspect(value) {
     if (!value || typeof value !== 'object') return;
+    if (value.concurrency?.queue !== undefined) {
+      // GitHub supports queue:max; pinned actionlint does not yet parse it.
+      // Product configs suppress only that exact schema diagnostic.
+      assert.equal(value.concurrency.queue, 'max', `${file}: unknown concurrency queue`);
+      assert.equal(value.concurrency['cancel-in-progress'], false, `${file}: queued production work must not be canceled`);
+    }
     if (typeof value.uses === 'string' && !value.uses.startsWith('./')) {
       assert.match(value.uses, /^[\w.-]+\/[\w./-]+@[a-f0-9]{40}$/, `${file}: action must use a full commit SHA: ${value.uses}`);
     }
