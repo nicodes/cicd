@@ -56,3 +56,7 @@ from the locked helper module with upstream race tests and a live binary scan.
 The weekly central tool watcher includes its full module inventory. Stateful
 rollback is denied unless `rollback-decision.py` receives the exact same-run
 old/new read-write compatibility proof required by the product policy.
+
+[Archetype templates](templates/README.md) provide the shared Make, CI, exact-tool
+and ignore-file envelope. Product scripts keep runtime and deployment behavior
+explicit; template regression tests exercise complete gates and failure propagation.
