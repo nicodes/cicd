@@ -26,3 +26,11 @@ Shared rollout work is tracked in nicodes/komizo-be#215.
 `helpers/release.py` records the release archive hash and exact image IDs after
 Build, then verifies the project, full commit, components, archive and loaded
 images before publication. Publish loads those artifacts and never rebuilds.
+
+Dependency automation uses `dependency-policy.py` before `merge-checked.py`.
+The policy requires review for sensitive libraries, grouped changes, majors,
+pre-1.0 minor updates and unknown version formats. The merge gate requires
+successful Test and Build checks on the current head, checks all other reported
+checks and statuses, rejects skipped required checks, and uses GitHub's atomic
+head-SHA merge condition. Only trusted base code runs with merge credentials.
+`report-failure.py` maintains an owned GitHub issue linked to bounded run evidence.
