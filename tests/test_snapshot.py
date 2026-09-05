@@ -29,11 +29,19 @@ class SnapshotBoundaries(unittest.TestCase):
             archive = root/'data.tar.gz'
             with tarfile.open(archive, 'w:gz') as tar: tar.add(root/'data.db', arcname='data.db')
             evidence = {'archive_sha256': snapshot.sha256(archive), 'image_id': 'sha256:'+'a'*64,
+                        'image_reference': 'ghcr.io/nicodes/example-db:'+'a'*40,
                         'verified_at': '2026-09-04T12:00:00+00:00'}
             (root/'verification.json').write_text(json.dumps(evidence))
             offhost = snapshot.seal(root, cert)
             target = root/'restored'; target.mkdir()
             self.assertEqual(snapshot.unseal(offhost, key, target)['archive_sha256'], evidence['archive_sha256'])
+            receipt = json.loads((offhost/'receipt.json').read_text())
+            receipt['image_reference'] = 'ghcr.io/nicodes/wrong-db:'+'b'*40
+            (offhost/'receipt.json').write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(ValueError, 'metadata'):
+                snapshot.unseal(offhost, key, target)
+            receipt['image_reference'] = evidence['image_reference']
+            (offhost/'receipt.json').write_text(json.dumps(receipt))
             ciphertext = offhost/'snapshot.cms'
             ciphertext.write_bytes(ciphertext.read_bytes()[:-1] + bytes([ciphertext.read_bytes()[-1] ^ 1]))
             # Even a replacement transport checksum cannot hide a broken GCM tag.

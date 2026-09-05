@@ -218,7 +218,7 @@ def snapshot(container, mount, destination, exclude_auxiliary=False, probe_port=
         restored = pending / 'restored'
         restored.mkdir(mode=0o700)
         evidence = restore(archive, restored)
-        evidence.update({'writer_id': writer, 'image_id': info['Image'],
+        evidence.update({'writer_id': writer, 'image_id': info['Image'], 'image_reference': info['Config']['Image'],
                          'excluded': sorted(excluded), 'verified_at': datetime.now(timezone.utc).isoformat()})
         name = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + evidence['archive_sha256'][:12]
         final = destination / name
@@ -239,9 +239,19 @@ def seal(directory, recipient):
     output = directory / 'offhost'
     output.mkdir(mode=0o700)
     ciphertext = output / 'snapshot.cms'
-    subprocess.run(['openssl', 'cms', '-encrypt', '-aes-256-gcm', '-binary', '-outform', 'DER',
-                    '-in', str(archive), '-out', str(ciphertext), str(recipient)], check=True, timeout=600)
-    receipt = {key: evidence[key] for key in ['archive_sha256', 'image_id', 'verified_at']}
+    # Bind recovery metadata to the authenticated ciphertext too. A transport
+    # receipt alone must not let a modified image reference select a restore binary.
+    if shutil.disk_usage(directory).free < 2 * archive.stat().st_size + 512 * 1024**2:
+        raise ValueError('insufficient headroom for authenticated off-host envelope')
+    with tempfile.TemporaryDirectory(prefix='snapshot-envelope-', dir=directory) as temporary:
+        envelope = Path(temporary) / 'envelope.tar'
+        with tarfile.open(envelope, 'w') as bundle:
+            bundle.add(archive, arcname='data.tar.gz', recursive=False)
+            bundle.add(directory / 'verification.json', arcname='verification.json', recursive=False)
+        subprocess.run(['openssl', 'cms', '-encrypt', '-aes-256-gcm', '-binary', '-outform', 'DER',
+                        '-in', str(envelope), '-out', str(ciphertext), str(recipient)], check=True, timeout=600)
+    receipt = {key: evidence[key] for key in ['archive_sha256', 'image_id', 'image_reference', 'verified_at']}
+    receipt['format'] = 1
     receipt['ciphertext_sha256'] = sha256(ciphertext)
     (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     return output
@@ -254,10 +264,28 @@ def unseal(directory, key, target):
     if sha256(ciphertext) != receipt['ciphertext_sha256']:
         raise ValueError('off-host ciphertext checksum mismatch')
     with tempfile.TemporaryDirectory(prefix='snapshot-decrypt-') as temporary:
-        archive = Path(temporary) / 'data.tar.gz'
+        envelope = Path(temporary) / 'envelope.tar'
         subprocess.run(['openssl', 'cms', '-decrypt', '-binary', '-inform', 'DER',
-                        '-in', str(ciphertext), '-inkey', str(key), '-out', str(archive)], check=True, timeout=600)
-        return restore(archive, target, receipt['archive_sha256'])
+                        '-in', str(ciphertext), '-inkey', str(key), '-out', str(envelope)], check=True, timeout=600)
+        seen = set()
+        with tarfile.open(envelope) as source:
+            for member in source:
+                if member.name not in {'data.tar.gz', 'verification.json'} or member.name in seen or not member.isfile():
+                    raise ValueError('invalid encrypted recovery envelope')
+                if member.size > (MAX_BYTES + 256 * 1024**2 if member.name == 'data.tar.gz' else 16 * 1024**2):
+                    raise ValueError('recovery envelope entry exceeds bounds')
+                seen.add(member.name)
+                with source.extractfile(member) as incoming, (Path(temporary) / member.name).open('wb') as output:
+                    shutil.copyfileobj(incoming, output)
+        if seen != {'data.tar.gz', 'verification.json'} or receipt.get('format') != 1:
+            raise ValueError('incomplete or unknown recovery envelope')
+        evidence = json.loads((Path(temporary) / 'verification.json').read_text())
+        for key in ['archive_sha256', 'image_id', 'image_reference', 'verified_at']:
+            if evidence[key] != receipt[key]:
+                raise ValueError('recovery metadata does not match authenticated envelope')
+        result = restore(Path(temporary) / 'data.tar.gz', target, evidence['archive_sha256'])
+        result.update({key: evidence[key] for key in ['image_id', 'image_reference', 'verified_at']})
+        return result
 
 
 def main():
