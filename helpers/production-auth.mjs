@@ -67,13 +67,24 @@ export async function productionJourney(project, origin, journey) {
   const { chromium } = require('playwright');
   const cleanup = [];
   let browser, task, failure;
+  let interrupted = false;
+  const interrupt = () => {
+    interrupted = true;
+    // Closing the owned browser unwinds Playwright into the cleanup below.
+    if (browser) void browser.close().catch(() => {});
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, interrupt);
+  const deadline = setTimeout(interrupt, 420000);
+  deadline.unref();
   try {
     task = await clerk('/agents/tasks', 'POST', { on_behalf_of: { user_id: user.id }, permissions: '*',
       agent_name: external, task_description: 'Automated owned-record production verification',
       redirect_url: origin + '/', session_max_duration_in_seconds: 300 });
     assert.match(task.agent_task_id, /^[A-Za-z0-9_-]{1,100}$/);
     assert.equal(new URL(task.url).protocol, 'https:');
+    assert(!interrupted, 'production verification was interrupted');
     browser = await chromium.launch({ headless: true });
+    assert(!interrupted, 'production verification was interrupted');
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     // No tracing: authenticated production traces would contain session headers.
     const page = await context.newPage();
@@ -119,9 +130,11 @@ export async function productionJourney(project, origin, journey) {
       catch { errors.push('delegated task revocation failed'); }
     }
     try { await retireSessions(); } catch { errors.push('synthetic session revocation failed'); }
+    clearTimeout(deadline);
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(signal, interrupt);
     if (errors.length) throw new Error(errors.join('; '));
   }
   // Avoid printing raw Playwright navigation errors with delegated URL tokens.
-  if (failure) throw new Error('Production browser journey failed; all available cleanup was attempted');
+  if (failure || interrupted) throw new Error('Production browser journey failed; all available cleanup was attempted');
   console.log(`${project}: real Clerk sign-in, owned-record journey, cleanup and task revocation passed.`);
 }

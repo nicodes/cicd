@@ -18,6 +18,8 @@ def receive(archive, target):
                 raise ValueError('unexpected, duplicate, or unsafe encrypted export entry')
             if member.size > (17 * 1024**3 if member.name == 'snapshot.cms' else 64 * 1024):
                 raise ValueError('encrypted export exceeds the size bound')
+            if shutil.disk_usage(target).free < member.size + 512 * 1024**2:
+                raise ValueError('insufficient disk headroom to receive encrypted export')
             seen.add(member.name)
             with source.extractfile(member) as incoming, (target / member.name).open('xb') as output:
                 shutil.copyfileobj(incoming, output)

@@ -16,6 +16,21 @@ spec.loader.exec_module(snapshot)
 
 
 class SnapshotBoundaries(unittest.TestCase):
+    def test_restore_refuses_a_member_that_would_exhaust_host_disk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root/'data.tar.gz'
+            with tarfile.open(archive, 'w:gz') as tar:
+                member = tarfile.TarInfo('data.db')
+                member.size = 1
+                tar.addfile(member, io.BytesIO(b'x'))
+            target = root/'restored'
+            target.mkdir()
+            with patch.object(snapshot.shutil, 'disk_usage', return_value=type('Usage', (), {'free': 512*1024**2})()):
+                with self.assertRaisesRegex(ValueError, 'headroom'):
+                    snapshot.restore(archive, target)
+            self.assertEqual(list(target.iterdir()), [])
+
     def test_encrypted_offhost_round_trip_and_tamper_refusal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

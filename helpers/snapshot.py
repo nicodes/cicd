@@ -65,6 +65,8 @@ def restore(archive, target, expected=None):
             if member.isdir():
                 destination.mkdir(mode=0o700, parents=True, exist_ok=True)
                 continue
+            if shutil.disk_usage(target).free < member.size + 512 * 1024**2:
+                raise ValueError('insufficient disk headroom to restore snapshot member')
             destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with source.extractfile(member) as incoming, destination.open('xb') as output:
                 shutil.copyfileobj(incoming, output, length=1024*1024)
@@ -264,6 +266,8 @@ def unseal(directory, key, target):
     if sha256(ciphertext) != receipt['ciphertext_sha256']:
         raise ValueError('off-host ciphertext checksum mismatch')
     with tempfile.TemporaryDirectory(prefix='snapshot-decrypt-') as temporary:
+        if shutil.disk_usage(temporary).free < 2 * ciphertext.stat().st_size + 512 * 1024**2:
+            raise ValueError('insufficient headroom to decrypt recovery envelope')
         envelope = Path(temporary) / 'envelope.tar'
         subprocess.run(['openssl', 'cms', '-decrypt', '-binary', '-inform', 'DER',
                         '-in', str(ciphertext), '-inkey', str(key), '-out', str(envelope)], check=True, timeout=600)
