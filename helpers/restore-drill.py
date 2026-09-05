@@ -43,7 +43,13 @@ def drill(project, export, key, pull=False):
         'ormos': {'db': 'db', 'binary': '/app/pocketbase', 'port': 8095, 'api_port': 9080, 'root': '/srv/public/app'},
         'cazper': {'db': 'db', 'binary': '/app/cazper-pocketbase', 'port': 8090, 'api_port': 8080, 'root': '/srv/public/app'},
         'komizo': {'db': 'service', 'binary': '/app/komizo-service', 'port': 8090, 'api_port': 8090, 'root': '/srv/app'},
+        'gdam': {'db': 'db', 'binary': '/usr/local/bin/pocketbase', 'port': 8090, 'api_port': 8080, 'root': '/srv/public/app'},
+        'termcade': {'db': 'db', 'binary': '/usr/local/bin/pocketbase', 'port': 8090, 'api_port': 8080, 'root': '/srv/public/app'},
+        'astry': {'db': 'pb', 'binary': '/usr/local/bin/pocketbase', 'port': 8090, 'api_port': 6060, 'root': '/srv/public/app'},
     }[project]
+    owner = {'gdam': 'aviorstudio', 'termcade': 'aviorstudio', 'astry': 'astrylogical'}.get(project, 'nicodes')
+    data_path = '/pb/pb_data' if project in {'gdam', 'termcade', 'astry'} else '/app/pb_data'
+    health_path = '/healthz' if project in {'gdam', 'termcade', 'astry'} else '/health'
     containers = []
     report = {'project': project, 'network': 'none; shared isolated loopback only', 'published_ports': []}
     memory = Path('/proc/meminfo')
@@ -57,14 +63,14 @@ def drill(project, export, key, pull=False):
         restored = root/'pb_data'
         restored.mkdir(mode=0o700)
         evidence = snapshot.unseal(root/'encrypted', key, restored)
-        match = re.fullmatch(rf'ghcr.io/nicodes/{project}-{config["db"]}:([a-f0-9]{{40}})', evidence['image_reference'])
+        match = re.fullmatch(rf'ghcr.io/{owner}/{project}-{config["db"]}:([a-f0-9]{{40}})', evidence['image_reference'])
         if not match:
             raise ValueError('authenticated snapshot image does not belong to this product')
         revision = match[1]
         components = [config['db'], 'gate'] + ([] if project == 'komizo' else ['api'])
         images = {}
         for component in components:
-            image = f'ghcr.io/nicodes/{project}-{component}:{revision}'
+            image = f'ghcr.io/{owner}/{project}-{component}:{revision}'
             if pull:
                 # Authenticate the encrypted project/revision before pulling.
                 # Registry credentials stay on the host, outside every clone.
@@ -89,6 +95,16 @@ def drill(project, export, key, pull=False):
             'CAZPER_PB_ADMIN_EMAIL': 'restore@verification.invalid', 'CAZPER_PB_ADMIN_PASSWORD': password,
             'CAZPER_DEV': '', 'OPENAI_API_KEY': '', 'CLERK_SECRET_KEY': '', 'KOMIZO_SIGNING_KEY': '',
         }
+        if project in {'gdam', 'termcade', 'astry'}:
+            env.update({
+                'PB_URL': 'http://127.0.0.1:8090', 'PB_ADMIN_EMAIL': 'restore@verification.invalid', 'PB_ADMIN_PASSWORD': password,
+                'GDAM_API_ADDR': ':8080', 'TERMCADE_API_ADDR': ':8080', 'TERMCADE_PROXY_HOPS': '2', 'TERMCADE_ENVIRONMENT': 'development',
+                'TERMCADE_COOKIE_SECURE': 'off', 'TERMCADE_ALLOWED_ORIGINS': 'http://127.0.0.1:8088',
+                'CLERK_SECRET_KEY': 'sk_test_restore_verification', 'CLERK_PUBLISHABLE_KEY': 'pk_test_Y2xlcmsucmVzdG9yZS5pbnZhbGlkJA',
+                'CLERK_AUTHORIZED_PARTIES': 'http://127.0.0.1:8088', 'CORS_ALLOWED_ORIGINS': 'http://127.0.0.1:8088',
+                'ASTRY_PB_ADMIN_EMAIL': 'restore@verification.invalid', 'ASTRY_PB_ADMIN_PASSWORD': password,
+                'LISTEN_ADDR': ':6060', 'TAROT_SIGNING_KEY': secrets.token_hex(32),
+            })
         if project == 'komizo':
             encryption = os.environ.get('PB_ENCRYPTION_KEY')
             if encryption is None:
@@ -102,19 +118,22 @@ def drill(project, export, key, pull=False):
         common = ['--read-only', '--user', f'{uid}:{uid}', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
                   '--cpus=1', '--pids-limit=128', '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m']
         private_env = ['--env-file', str(environment)]
-        mount = ['--mount', f'type=bind,src={restored},dst=/app/pb_data']
+        mount = ['--mount', f'type=bind,src={restored},dst={data_path}']
         try:
             # This affects only the decrypted disposable clone.
             bootstrap = prefix+'-bootstrap'
             containers.append(bootstrap)
             docker('run', '--name', bootstrap, '--network=none', *common, '--memory=192m', *private_env, *mount,
                    '--entrypoint', config['binary'], images[config['db']], 'superuser', 'upsert',
-                   'restore@verification.invalid', password, '--dir=/app/pb_data', *settings_flags, timeout=180)
+                   'restore@verification.invalid', password, f'--dir={data_path}', *settings_flags, timeout=180)
             db = prefix+'-db'
             containers.append(db)
-            command = ['serve', f'--http=127.0.0.1:{config["port"]}', '--dir=/app/pb_data', *settings_flags]
+            command = ['serve', f'--http=127.0.0.1:{config["port"]}', f'--dir={data_path}', *settings_flags]
             if project == 'ormos':
                 command += ['--automigrate=false', '--hooksDir=/app/pb_hooks', '--migrationsDir=/app/pb_migrations']
+            if project in {'gdam', 'termcade', 'astry'}:
+                command += ['--automigrate=false', '--migrationsDir=/pb/pb_migrations']
+                if project == 'astry': command += ['--hooksDir=/pb/pb_hooks']
             docker('run', '-d', '--name', db, '--network=none', *common, '--memory=192m', *private_env, *mount,
                    '--entrypoint', config['binary'], images[config['db']], *command)
             # The gate image supplies wget for the distroless service too.
@@ -145,7 +164,7 @@ def drill(project, export, key, pull=False):
                 api = prefix+'-api'
                 containers.append(api)
                 docker('run', '-d', '--name', api, '--network', f'container:{db}', *common, '--memory=128m', *private_env, images['api'])
-                probe(f'http://127.0.0.1:{config["api_port"]}/health', timeout=60)
+                probe(f'http://127.0.0.1:{config["api_port"]}{health_path}', timeout=60)
                 if not json.loads(docker('inspect', api))[0]['State']['Running']:
                     raise RuntimeError('restored API did not remain running')
             gate = prefix+'-gate'
@@ -172,7 +191,7 @@ def drill(project, export, key, pull=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project', choices=['ormos', 'cazper', 'komizo'], required=True)
+    parser.add_argument('--project', choices=['ormos', 'cazper', 'komizo', 'gdam', 'termcade', 'astry'], required=True)
     parser.add_argument('--export', type=Path, required=True)
     parser.add_argument('--key', type=Path, required=True)
     parser.add_argument('--lock', type=Path, help='root-owned host lock for scheduled drills')

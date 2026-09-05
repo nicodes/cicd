@@ -9,6 +9,22 @@ import re
 import subprocess
 
 
+PRODUCTS = {
+    'ormos': ('nicodes', ['api', 'db', 'gate']),
+    'cazper': ('nicodes', ['api', 'db', 'gate']),
+    'komizo': ('nicodes', ['service', 'gate']),
+    'gdam': ('aviorstudio', ['api', 'db', 'gate']),
+    'termcade': ('aviorstudio', ['api', 'db', 'gate', 'maintenance']),
+    'astry': ('astrylogical', ['api', 'pb', 'gate']),
+}
+
+def product_images(project, repository, revision):
+    owner, components = PRODUCTS[project]
+    if repository != f'{owner}/{project}-be' or not re.fullmatch(r'[a-f0-9]{40}', revision):
+        raise ValueError('repository or revision does not match the declared product')
+    return [f'ghcr.io/{owner}/{project}-{component}:{revision}' for component in components]
+
+
 def api(path):
     return json.loads(subprocess.check_output(['gh', 'api', path], text=True, timeout=30))
 
@@ -48,20 +64,19 @@ def deployed_revisions(repository):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project', required=True, choices=['ormos', 'cazper', 'komizo'])
+    parser.add_argument('--project', required=True, choices=list(PRODUCTS))
     args = parser.parse_args()
-    repository = os.environ.get('GITHUB_REPOSITORY', f'nicodes/{args.project}-be')
-    if repository != f'nicodes/{args.project}-be':
+    owner, components = PRODUCTS[args.project]
+    repository = os.environ.get('GITHUB_REPOSITORY', f'{owner}/{args.project}-be')
+    if repository != f'{owner}/{args.project}-be':
         raise ValueError('repository does not match the declared product')
     revisions = deployed_revisions(repository)
     spec = importlib.util.spec_from_file_location('scan_image', Path(__file__).with_name('scan-image.py'))
     scanner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(scanner)
-    components = ['service', 'gate'] if args.project == 'komizo' else ['api', 'db', 'gate']
     results, failures = [], []
     for revision in revisions:
-        for component in components:
-            image = f'ghcr.io/nicodes/{args.project}-{component}:{revision}'
+        for image in product_images(args.project, repository, revision):
             try:
                 subprocess.run(['docker', 'pull', image], check=True, timeout=300)
                 results.append(scanner.scan(image))

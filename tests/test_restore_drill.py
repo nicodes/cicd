@@ -44,3 +44,22 @@ class RestoreBoundaries(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 drill.docker('run', secret)
             self.assertNotIn(secret, str(raised.exception))
+
+    def test_new_product_backup_namespace_is_authenticated_before_any_pull(self):
+        for project, owner, component in [('gdam','aviorstudio','db'), ('termcade','aviorstudio','db'), ('astry','astrylogical','pb')]:
+            evidence = {'image_reference': f'ghcr.io/nicodes/{project}-{component}:'+'a'*40, 'image_id':'sha256:'+'b'*64}
+            snapshot = SimpleNamespace(unseal=lambda *_: evidence)
+            receiver = SimpleNamespace(receive=lambda *_: None)
+            with patch.object(drill, 'helper', lambda name: snapshot if name == 'snapshot' else receiver), patch.object(drill,'docker') as docker:
+                with self.assertRaisesRegex(ValueError,'product'):
+                    drill.drill(project,Path('/unused'),Path('/unused'),pull=True)
+                docker.assert_not_called()
+            evidence['image_reference'] = f'ghcr.io/{owner}/{project}-{component}:'+'a'*40
+            calls = []
+            def docker(*args, **kwargs):
+                calls.append(args)
+                return json.dumps([{'Id':'sha256:'+'c'*64}]) if args[:2] == ('image','inspect') else ''
+            with patch.object(drill,'helper',lambda name: snapshot if name == 'snapshot' else receiver), patch.object(drill,'docker',docker):
+                with self.assertRaisesRegex(ValueError,'differs'):
+                    drill.drill(project,Path('/unused'),Path('/unused'),pull=True)
+            self.assertEqual(calls, [('pull','--quiet',evidence['image_reference']),('image','inspect',evidence['image_reference'])])
