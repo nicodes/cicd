@@ -20,6 +20,7 @@ const children = [];
 const servers = [];
 let browser, context;
 let failed = true;
+const blockedRequests = [];
 let stopping = false;
 let cancel;
 const cancelled = new Promise((_, reject) => { cancel = reject; });
@@ -119,9 +120,18 @@ try {
 
   const result = await Promise.race([cancelled, journey({ root, scratch, artifacts, start, run, ready, json, port,
     web, issuerAPI, token, keyFetches: () => keyFetches,
-    async page(signed) {
+    async page(signed, origins) {
+      assert(Array.isArray(origins) && origins.length, 'declare the disposable backend origins');
+      const allowed = new Set([web, ...origins]);
       browser = await chromium.launch({ headless: true });
       context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+      await context.route('**/*', route => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (allowed.has(url.origin)) return route.continue();
+        blockedRequests.push(url.origin + url.pathname);
+        return route.abort('blockedbyclient');
+      });
       await context.tracing.start({ screenshots: true, snapshots: true });
       await context.addInitScript(value => { window.__ENGINEERING_ISOLATED_AUTH = value; }, signed);
       const page = await context.newPage();
@@ -129,6 +139,7 @@ try {
       return page;
     },
   })]);
+  assert.deepEqual(blockedRequests, [], 'browser attempted to leave the disposable stack');
   await writeFile(join(artifacts, 'journey.json'), JSON.stringify({ project, ...result }, null, 2) + '\n');
   failed = false;
   console.log(`${project}: authenticated browser journey and production issuer rejection passed.`);
