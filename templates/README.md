@@ -1,7 +1,8 @@
 # Repository envelope templates
 
 Owner: nicodes. Copy the selected archetype's `Makefile`, `.mise.toml` and
-`.gitignore` into the product root and `ci.yml` into `.github/workflows/ci.yml`.
+`.gitignore` into the product root and `ci.yml` into `.github/workflows/ci.yml`. Copy `dependabot.yml` into
+`.github/dependabot.yml`, adding an explicit entry for every extra Go module.
 These are envelope templates, not complete applications. Missing product scripts
 fail the gate; never replace them with successful placeholders. The six migrated
 repositories provide concrete, tested integrations.
