@@ -74,4 +74,5 @@ for (const directory of ['api', 'pb', 'cli', 'poc']) {
 console.log(`Exact tool, lockfile, Go, image, and action pins verified in ${root}`);
 
 verifyDependencyCoverage(Bun.YAML.parse(fs.readFileSync('.github/dependabot.yml', 'utf8')),
-  execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean));
+  execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean),
+  Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8')));
