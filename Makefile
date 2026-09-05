@@ -10,5 +10,6 @@ install:
 test:
 	python3 -m unittest discover -s tests -v
 check: test
+	python3 helpers/test-caddy.py
 	@for file in helpers/*.mjs helpers/*.cjs; do node --check "$$file"; done
 	actionlint
