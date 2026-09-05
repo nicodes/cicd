@@ -34,3 +34,25 @@ successful Test and Build checks on the current head, checks all other reported
 checks and statuses, rejects skipped required checks, and uses GitHub's atomic
 head-SHA merge condition. Only trusted base code runs with merge credentials.
 `report-failure.py` maintains an owned GitHub issue linked to bounded run evidence.
+
+Recovery helpers verify safe archives and SQLite integrity (including WAL), bind
+image metadata inside authenticated encryption, and validate off-host transport.
+`restore-drill.py` boots the recorded database, API and frontend images against
+a disposable clone with no external container network. Its optional `--pull`
+mode authenticates the backup's project/revision before reading registry images.
+Recovery and database settings keys must be supplied explicitly; the helper
+never extracts credentials from a production container.
+
+Weekly product restores run on a GitHub runner with recovery keys scoped to the
+production environment. Production hosts export encrypted snapshots using only
+the public certificate. The restore preflight requires 768 MiB available memory;
+the current 1 GB production hosts do not meet it alongside their live services.
+`test-restore-drill.py` exercises the same command with disposable local data and
+keys. Production data or credentials are not needed for the fixture.
+
+`scan-image.py` scans actual runtime Go binaries; `scan-deployed.py` covers both
+the latest deployment attempt and the last successful revision. Caddy is built
+from the locked helper module with upstream race tests and a live binary scan.
+The weekly central tool watcher includes its full module inventory. Stateful
+rollback is denied unless `rollback-decision.py` receives the exact same-run
+old/new read-write compatibility proof required by the product policy.
