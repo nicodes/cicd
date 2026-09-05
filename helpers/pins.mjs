@@ -20,11 +20,16 @@ for (const [name, version] of Object.entries(config.tools)) {
   assert.equal(typeof version, 'string', `${name}: use one exact tool version`);
   assert.match(version, /^\d+\.\d+\.\d+$/, `${name}: ${version} is not an exact version`);
 }
-const app = JSON.parse(fs.readFileSync('app/package.json', 'utf8'));
-assert.equal(app.packageManager, `bun@${config.tools.bun}`);
-assert.ok(fs.existsSync('app/bun.lock'), 'the app must commit bun.lock');
-for (const name of ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb']) {
-  assert.ok(!fs.existsSync(path.join('app', name)), `remove the competing ${name}`);
+const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+const applications = tracked.filter(file => /^[^/]+\/package\.json$/.test(file)).map(file => path.dirname(file));
+assert.ok(applications.includes('app'), 'the product app must be tracked');
+for (const directory of applications) {
+  const app = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
+  assert.equal(app.packageManager, `bun@${config.tools.bun}`, `${directory}: Bun pin differs`);
+  assert.ok(fs.existsSync(path.join(directory, 'bun.lock')), `${directory}: commit bun.lock`);
+  for (const name of ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb']) {
+    assert.ok(!fs.existsSync(path.join(directory, name)), `${directory}: remove the competing ${name}`);
+  }
 }
 
 function walk(directory) {
@@ -54,7 +59,7 @@ for (const file of workflows) {
   }
   inspect(document);
 }
-for (const file of walk('deploy').filter(file => /Dockerfile$/.test(file))) {
+for (const file of tracked.filter(file => /(^|[/.])Dockerfile$/.test(file))) {
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     const from = /^FROM\s+(\S+)/i.exec(line)?.[1];
     if (!from || from === 'scratch') continue;
@@ -63,8 +68,7 @@ for (const file of walk('deploy').filter(file => /Dockerfile$/.test(file))) {
     if (go) assert.equal(go, config.tools.go, `${file}: Go builder differs from mise`);
   }
 }
-for (const directory of ['api', 'pb', 'cli', 'poc']) {
-  const file = path.join(directory, 'go.mod');
+for (const file of tracked.filter(file => /(^|\/)go\.mod$/.test(file))) {
   if (!fs.existsSync(file)) continue;
   const module = fs.readFileSync(file, 'utf8');
   assert.equal(/^go ([\d.]+)$/m.exec(module)?.[1], config.tools.go, `${file}: Go version differs from mise`);

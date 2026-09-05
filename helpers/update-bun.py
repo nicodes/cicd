@@ -49,15 +49,29 @@ def parse_inventory(output):
 
 
 def prepare(root):
-    manifest = json.loads((root/'app/package.json').read_text())
+    tracked = set(run(['git', 'ls-files', '-z'], cwd=root).split('\0'))
+    applications = sorted({str(Path(name).parent) for name in tracked
+                           if name.endswith('/package.json') and name.count('/') == 1})
+    if 'app' not in applications:
+        raise ValueError('The product must declare its app manifest')
+    inventory, changes = [], {}
+    for application in applications:
+        rows, files = prepare_application(root, application)
+        inventory.extend(dict(row, application=application) for row in rows)
+        changes.update(files)
+    return inventory, changes
+
+
+def prepare_application(root, application):
+    manifest = json.loads((root/application/'package.json').read_text())
     version = run(['bun', '--version']).strip()
     if manifest.get('packageManager') != 'bun@'+version:
         raise ValueError('Update automation must use the exact repository Bun pin')
     tracked = set(run(['git', 'ls-files', '-z'], cwd=root).split('\0'))
-    required = ['app/package.json', 'app/bun.lock']
-    required += ['app/'+value for value in manifest.get('patchedDependencies', {}).values()]
-    if 'app/bunfig.toml' in tracked:
-        required.append('app/bunfig.toml')
+    required = [application+'/package.json', application+'/bun.lock']
+    required += [application+'/'+value for value in manifest.get('patchedDependencies', {}).values()]
+    if application+'/bunfig.toml' in tracked:
+        required.append(application+'/bunfig.toml')
     # Dependency resolution gets no GitHub credential and executes no lifecycle scripts.
     env = {name: value for name, value in os.environ.items()
            if name not in {'GH_TOKEN', 'GITHUB_TOKEN', 'NODE_AUTH_TOKEN', 'NPM_TOKEN'}}
@@ -66,27 +80,27 @@ def prepare(root):
         work = Path(temporary)
         for name in required:
             source = root/name
-            if name not in tracked or source.is_symlink() or not source.resolve().is_relative_to(root.resolve()/'app'):
+            if name not in tracked or source.is_symlink() or not source.resolve().is_relative_to(root.resolve()/application):
                 raise ValueError('Bun update input must be a tracked app file')
             target = work/name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
-        inventory = parse_inventory(run(['bun', 'outdated'], cwd=work/'app', env=env, timeout=600))
+        inventory = parse_inventory(run(['bun', 'outdated'], cwd=work/application, env=env, timeout=600))
         run(['bun', 'update', '--lockfile-only', '--ignore-scripts', '--no-progress'],
-            cwd=work/'app', env=env, timeout=900)
-        updated = json.loads((work/'app/package.json').read_text())
+            cwd=work/application, env=env, timeout=900)
+        updated = json.loads((work/application/'package.json').read_text())
         # Preserve policies, overrides and patch declarations. Only Bun's dependency
         # range maintenance may change the manifest; no scripts or tooling edits.
         groups = {'dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'}
         if {k:v for k,v in manifest.items() if k not in groups} != {k:v for k,v in updated.items() if k not in groups}:
             raise ValueError('Bun changed non-dependency manifest fields')
-        changes = {name: (work/name).read_text() for name in ['app/package.json', 'app/bun.lock']
+        changes = {name: (work/name).read_text() for name in [application+'/package.json', application+'/bun.lock']
                    if (work/name).read_bytes() != (root/name).read_bytes()}
     return inventory, changes
 
 
 def publish(repo, base, inventory, changes):
-    if not re.fullmatch(r'nicodes/[a-z0-9-]+', repo) or not re.fullmatch(r'[a-f0-9]{40}', base):
+    if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo) or not re.fullmatch(r'[a-f0-9]{40}', base):
         raise ValueError('Invalid issue target')
     if api(repo, 'git/ref/heads/main')['object']['sha'] != base:
         raise ValueError('Main changed; rerun the update inventory on current main')
@@ -97,12 +111,12 @@ def publish(repo, base, inventory, changes):
     existing = json.loads(run(['gh', 'issue', 'list', '--repo', repo, '--state', 'open',
         '--search', 'in:title "'+title+'"', '--limit', '100', '--json', 'number,title']))
     existing = [item for item in existing if item['title'] == title]
-    rows = ''.join(f"| `{i['package']}` | `{i['current']}` | `{i['update']}` | `{i['latest']}` |\n" for i in inventory)
+    rows = ''.join(f"| `{i.get('application', 'app')}` | `{i['package']}` | `{i['current']}` | `{i['update']}` | `{i['latest']}` |\n" for i in inventory)
     refresh = ('A within-range/transitive refresh would change: '+', '.join('`'+name+'`' for name in sorted(changes))+'.'
                if changes else 'No within-range lockfile or manifest refresh was found.')
     body = ('Owner: @nicodes\n\nThe pinned Bun found dependency maintenance work. `Update` respects the '
             'current manifest range; `Latest` also shows releases outside that range.\n\n'
-            '| Package | Current | Update | Latest |\n|---|---|---|---|\n'+rows+'\n'+refresh+'\n\n'
+            '| Application | Package | Current | Update | Latest |\n|---|---|---|---|---|\n'+rows+'\n'+refresh+'\n\n'
             'Owner decision (2026-09-05): this workflow creates or updates this issue only. '
             'It never creates branches or PRs, approves changes, merges or dispatches CI. '
             'Review the updates and open a PR manually. Run the complete `make check` and '

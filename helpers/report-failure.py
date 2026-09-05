@@ -11,7 +11,7 @@ repo = os.environ['GITHUB_REPOSITORY']
 run = os.environ['GITHUB_RUN_ID']
 workflow = os.environ['GITHUB_WORKFLOW']
 revision = os.environ['GITHUB_SHA']
-if not re.fullmatch(r'nicodes/[a-z0-9-]+', repo) or not run.isdigit() or not re.fullmatch(r'[a-f0-9]{40}', revision):
+if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo) or not run.isdigit() or not re.fullmatch(r'[a-f0-9]{40}', revision):
     raise ValueError('invalid workflow identity')
 title = f'{workflow}: required automation failed'
 body = (f'Owner: @nicodes\n\nThe required **{workflow}** workflow failed for `{revision}`.\n\n'

@@ -57,3 +57,22 @@ class BunUpdates(unittest.TestCase):
             update.publish('nicodes/example-be', 'a'*40, [], {})
             self.assertEqual(api.call_count, 1)
             run.assert_not_called()
+
+    def test_all_top_level_bun_applications_are_reported(self):
+        files = 'app/package.json\0web/package.json\0e2e/package.json\0app/node_modules/no/package.json\0'
+        def prepare(root, application):
+            return [{'package': 'example', 'current': '1.0.0', 'update': '1.0.1', 'latest': '2.0.0'}], {application+'/bun.lock': 'new'}
+        with patch.object(update, 'run', return_value=files), patch.object(update, 'prepare_application', side_effect=prepare):
+            rows, changes = update.prepare(Path('/repo'))
+        self.assertEqual([r['application'] for r in rows], ['app', 'e2e', 'web'])
+        self.assertEqual(set(changes), {'app/bun.lock', 'web/bun.lock', 'e2e/bun.lock'})
+
+    def test_only_the_explicit_new_repositories_are_allowed(self):
+        for repo in ['aviorstudio/gdam-be', 'aviorstudio/termcade-be', 'astrylogical/astry-be']:
+            with patch.object(update, 'api', return_value={'object': {'sha': 'a'*40}}):
+                update.publish(repo, 'a'*40, [], {})
+        for repo in ['aviorstudio/unrelated', 'astrylogical/unrelated', 'attacker/gdam-be']:
+            with patch.object(update, 'api') as api:
+                with self.assertRaises(ValueError):
+                    update.publish(repo, 'a'*40, [], {})
+                api.assert_not_called()

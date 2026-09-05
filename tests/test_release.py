@@ -31,3 +31,18 @@ class ReleaseIdentity(unittest.TestCase):
         for revision, components in [('latest', ['gate']), ('a'*40, []), ('a'*40, ['gate', 'gate']), ('a'*40, ['other'])]:
             with self.assertRaises(ValueError):
                 release.references('ctcalc', revision, components)
+
+    def test_additional_product_namespaces_preserve_image_identity(self):
+        for project, owner, components in [('gdam', 'aviorstudio', ['api', 'db', 'gate']),
+                ('termcade', 'aviorstudio', ['api', 'db', 'gate', 'maintenance']),
+                ('astry', 'astrylogical', ['api', 'pb', 'gate'])]:
+            refs = release.references(project, 'a'*40, components)
+            self.assertEqual(refs, [f'ghcr.io/{owner}/{project}-{component}:'+ 'a'*40 for component in components])
+            with tempfile.TemporaryDirectory() as directory:
+                archive = Path(directory)/'images.tar.gz'
+                archive.write_bytes(b'checked')
+                manifest = {'project': project, 'revision': 'a'*40, 'images': dict.fromkeys(refs, 'sha256:'+'b'*64), 'archive_sha256': release.digest(archive)}
+                release.validate(manifest, project, 'a'*40, components, archive)
+                manifest['images'] = {key.replace(owner, 'nicodes'): value for key, value in manifest['images'].items()}
+                with self.assertRaises(ValueError):
+                    release.validate(manifest, project, 'a'*40, components, archive)

@@ -69,7 +69,7 @@ def main():
         ['mise', 'outdated', '--bump', '--local', '--json'], text=True, timeout=600))
     pending = updates(root, installed, outdated) + caddy_updates(root)
     repo = os.environ['GITHUB_REPOSITORY']
-    if not re.fullmatch(r'nicodes/[a-z0-9-]+', repo):
+    if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo):
         raise ValueError('invalid repository')
     title = 'Tool maintenance: pinned versions have updates'
     issues = json.loads(subprocess.check_output(['gh', 'issue', 'list', '--repo', repo,

@@ -56,7 +56,7 @@ def decision(checks, statuses, head, self_prefix, required=('Test', 'Build')):
 
 def main():
     repo, pr, head, run = [os.environ[key] for key in ['GITHUB_REPOSITORY', 'PR_NUMBER', 'EXPECTED_HEAD', 'GITHUB_RUN_ID']]
-    if not re.fullmatch(r'nicodes/[a-z0-9-]+', repo) or not pr.isdigit() or not run.isdigit() or not re.fullmatch(r'[a-f0-9]{40}', head):
+    if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo) or not pr.isdigit() or not run.isdigit() or not re.fullmatch(r'[a-f0-9]{40}', head):
         raise ValueError('invalid merge identity')
     prefix = f'https://github.com/{repo}/actions/runs/{run}/'
     def pull():
