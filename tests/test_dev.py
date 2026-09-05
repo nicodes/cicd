@@ -44,5 +44,30 @@ class OwnedDevelopment(unittest.TestCase):
                     process.wait(timeout=15)
 
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux nested PTY session ownership')
+    def test_stop_reaps_detached_descendants_without_touching_unrelated_process(self):
+        with tempfile.TemporaryDirectory() as root:
+            code = "import os,time; from pathlib import Path; Path('escaped.pid').write_text(str(os.getpid())); time.sleep(90)"
+            parent = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',"+repr(code)+"],start_new_session=True); time.sleep(90)"
+            unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(90)'], start_new_session=True)
+            process = subprocess.Popen([sys.executable, SCRIPT, 'run', '--', sys.executable, '-c', parent], cwd=root)
+            try:
+                pidfile = Path(root)/'escaped.pid'
+                deadline = time.monotonic()+5
+                while not pidfile.exists():
+                    self.assertIsNone(process.poll())
+                    self.assertLess(time.monotonic(),deadline)
+                    time.sleep(.02)
+                escaped = int(pidfile.read_text())
+                subprocess.run([sys.executable, SCRIPT, 'stop'], cwd=root, check=True, timeout=15)
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertFalse(Path('/proc',str(escaped)).exists(), 'separate-session child survived owned shutdown')
+                self.assertIsNone(unrelated.poll())
+            finally:
+                if process.poll() is None:
+                    process.terminate(); process.wait(timeout=15)
+                unrelated.terminate(); unrelated.wait(timeout=5)
+
+
 if __name__ == '__main__':
     unittest.main()
