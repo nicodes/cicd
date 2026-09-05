@@ -15,7 +15,9 @@ file's SHA256. Update the complete snapshot together and run the product's full
 - `dev.py`: live supervisor and authenticated local stop socket; no port-based
   killing and no persisted PID used as shutdown authority.
 - `export-web.py`: clean, bounded Expo export; requires exit0, HTML and JS.
-- `pins.mjs`: exact tool/module/lockfile/image/action references.
+- `pins.mjs`: exact tool/module/lockfile/image/action references and dependency-update coverage.
+- `dependency-coverage.mjs`: require scheduled updates for the app, actions, images
+  and every tracked Go module; a newly added module cannot silently lose coverage.
 - `audit.py`: live online dependency audit; any local repair needs reviewed
   patch and installed-source hashes, adversarial tests, an owner and review date.
 - `dependency-compatibility.cjs`: exercise repaired transitive dependency calls.
@@ -56,3 +58,7 @@ from the locked helper module with upstream race tests and a live binary scan.
 The weekly central tool watcher includes its full module inventory. Stateful
 rollback is denied unless `rollback-decision.py` receives the exact same-run
 old/new read-write compatibility proof required by the product policy.
+
+[Archetype templates](templates/README.md) provide the shared Make, CI, exact-tool
+and ignore-file envelope. Product scripts keep runtime and deployment behavior
+explicit; template regression tests exercise complete gates and failure propagation.

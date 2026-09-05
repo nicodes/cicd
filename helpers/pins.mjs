@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { verifyDependencyCoverage } from './dependency-coverage.mjs';
 
 const root = process.cwd();
 const snapshotRoot = path.join(root, 'scripts/engineering');
@@ -70,3 +72,6 @@ for (const directory of ['api', 'pb', 'cli', 'poc']) {
   if (toolchain) assert.equal(toolchain, config.tools.go, `${file}: hidden toolchain drift`);
 }
 console.log(`Exact tool, lockfile, Go, image, and action pins verified in ${root}`);
+
+verifyDependencyCoverage(Bun.YAML.parse(fs.readFileSync('.github/dependabot.yml', 'utf8')),
+  execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean));
