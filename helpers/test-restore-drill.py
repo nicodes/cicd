@@ -23,10 +23,12 @@ def main(project, release):
     restore = load('restore-drill')
     snapshot = load('snapshot')
     revision = json.loads(release.read_text())['revision']
-    component = 'service' if project == 'komizo' else 'db'
-    reference = f'ghcr.io/nicodes/{project}-{component}:{revision}'
+    component = {'komizo':'service', 'astry':'pb'}.get(project, 'db')
+    owner = {'gdam':'aviorstudio','termcade':'aviorstudio','astry':'astrylogical'}.get(project, 'nicodes')
+    reference = f'ghcr.io/{owner}/{project}-{component}:{revision}'
     image = json.loads(restore.docker('image', 'inspect', reference))[0]['Id']
-    binary = {'ormos': '/app/pocketbase', 'cazper': '/app/cazper-pocketbase', 'komizo': '/app/komizo-service'}[project]
+    binary = {'ormos': '/app/pocketbase', 'cazper': '/app/cazper-pocketbase', 'komizo': '/app/komizo-service', 'gdam':'/usr/local/bin/pocketbase','termcade':'/usr/local/bin/pocketbase','astry':'/usr/local/bin/pocketbase'}[project]
+    data_path = '/pb/pb_data' if project in {'gdam','termcade','astry'} else '/app/pb_data'
     # Empty configuration is intentional: this fixture cannot inspect any live
     # container or obtain a real settings encryption key.
     os.environ['PB_ENCRYPTION_KEY'] = ''
@@ -41,9 +43,9 @@ def main(project, release):
         try:
             restore.docker('run', '--name', name, '--network=none', '--read-only', '--user', f'{uid}:{uid}',
                 '--cap-drop=ALL', '--security-opt=no-new-privileges:true', '--memory=192m', '--cpus=1', '--pids-limit=128',
-                '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m', '--mount', f'type=bind,src={data},dst=/app/pb_data',
+                '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m', '--mount', f'type=bind,src={data},dst={data_path}',
                 '--entrypoint', binary, image, 'superuser', 'upsert', 'fixture@verification.invalid',
-                secrets.token_hex(32), '--dir=/app/pb_data', timeout=180)
+                secrets.token_hex(32), f'--dir={data_path}', timeout=180)
         finally:
             restore.docker('rm', '-f', '-v', name)
         archive = root/'data.tar.gz'
@@ -76,7 +78,7 @@ def main(project, release):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project', choices=['ormos', 'cazper', 'komizo'], required=True)
+    parser.add_argument('--project', choices=['ormos', 'cazper', 'komizo', 'gdam', 'termcade', 'astry'], required=True)
     parser.add_argument('--release', type=Path, default=Path('.artifacts/release/release.json'))
     args = parser.parse_args()
     os.umask(0o077)
