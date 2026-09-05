@@ -80,9 +80,24 @@ def main():
         print('All repository tool pins are current.')
         # Do not automatically close a human's maintenance investigation.
         return
+    inventory = root/'.artifacts/tool-updates.json'
+    inventory.parent.mkdir(parents=True, exist_ok=True)
+    inventory.write_text(json.dumps(pending, indent=2)+'\n')
+    rows = ''
+    shown = 0
+    for name, old, new in pending:
+        row = f'| `{name}` | `{old}` | `{new}` |\n'
+        if len(rows) + len(row) > 10000:
+            break
+        rows += row
+        shown += 1
+    inventory_note = f'\nShowing {shown} of {len(pending)} updates. Full inventory: the `tool-updates` workflow artifact.\n'
+    run = os.environ.get('GITHUB_RUN_ID', '')
+    if run.isdigit():
+        inventory_note += f'[Workflow run](https://github.com/{repo}/actions/runs/{run})\n'
     body = ('Owner: @nicodes\n\nThe scheduled tool watch found these upstream releases.\n\n'
             '| Tool | Pinned | Available |\n|---|---|---|\n' +
-            ''.join(f'| `{name}` | `{old}` | `{new}` |\n' for name, old, new in pending) +
+            rows + inventory_note +
             '\nUpdate `.mise.toml` and every corresponding Go directive, Docker builder, '
             'download URL, and binary checksum together. Obtain checksums from the upstream '
             'release and verify the actual downloaded bytes. Keep the Bun packageManager '
