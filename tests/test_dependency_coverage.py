@@ -9,17 +9,23 @@ class DependencyCoverage(unittest.TestCase):
         module = (Path(__file__).parents[1] / 'helpers/dependency-coverage.mjs').as_uri()
         program = f'''import {{ verifyDependencyCoverage }} from {json.dumps(module)};
 const data = JSON.parse(process.argv[1]);
-verifyDependencyCoverage(data.config, data.files);
+verifyDependencyCoverage(data.config, data.files, data.bun);
 '''
         updates = [
             {'package-ecosystem': ecosystem, 'directories': directories, 'schedule': {'interval': 'weekly'}}
-            for ecosystem, directories in [('github-actions', ['/']), ('bun', ['/app']),
+            for ecosystem, directories in [('github-actions', ['/']),
                                             ('docker', ['/deploy/images']), ('gomod', ['/api', '/pb'])]
         ]
 
-        def check(files, entries=updates):
+        workflow = {'on': {'schedule': [{'cron': '17 10 * * 1'}]}, 'jobs': {'update': {
+            'permissions': {'contents': 'read', 'issues': 'write'},
+            'if': "github.ref == 'refs/heads/main'", 'steps': [
+                {'uses': 'jdx/mise-action@'+'a'*40},
+                {'run': 'python3 scripts/engineering/helpers/update-bun.py'}]}}}
+
+        def check(files, entries=updates, bun=workflow):
             return subprocess.run(['bun', '--eval', program, json.dumps({
-                'config': {'version': 2, 'updates': entries}, 'files': files})],
+                'config': {'version': 2, 'updates': entries}, 'files': files, 'bun': bun})],
                 capture_output=True, text=True, timeout=20)
 
         self.assertEqual(check(['app/package.json']).returncode, 0)
@@ -29,5 +35,13 @@ verifyDependencyCoverage(data.config, data.files);
         disabled = json.loads(json.dumps(updates))
         disabled[-1]['schedule'] = {}
         self.assertNotEqual(check(['api/go.mod'], disabled).returncode, 0)
-        for index in range(3):
+        for index in range(2):
             self.assertNotEqual(check([], updates[:index] + updates[index+1:]).returncode, 0)
+
+        self.assertNotEqual(check([], bun={}).returncode, 0)
+        for permission in ['contents', 'pull-requests', 'actions']:
+            excessive = json.loads(json.dumps(workflow))
+            excessive['jobs']['update']['permissions'][permission] = 'write'
+            self.assertNotEqual(check([], bun=excessive).returncode, 0)
+        workflow['jobs']['update']['environment'] = 'production'
+        self.assertNotEqual(check([]).returncode, 0)

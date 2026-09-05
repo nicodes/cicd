@@ -6,10 +6,6 @@ updates:
     directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
-  - package-ecosystem: bun
-    directory: /app
-    schedule:
-      interval: weekly
   - package-ecosystem: docker
     directory: /deploy/images
     schedule:

@@ -27,6 +27,15 @@ export function verifySyntheticUser(user, project) {
   assert.equal(user.primary_email_address_id, email.id);
 }
 
+// A disabled Organizations feature cannot confer organization membership.
+// Match the exact documented code and endpoint; generic 403s remain failures.
+export function organizationsDisabled(status, method, path, error) {
+  return status === 403 && method === 'GET'
+    && /^\/users\/user_[A-Za-z0-9]+\/organization_memberships\?limit=1$/.test(path)
+    && error?.errors?.length === 1
+    && error.errors[0].code === 'organization_not_enabled_in_instance';
+}
+
 export async function productionJourney(project, origin, journey) {
   assert(['cazper', 'komizo'].includes(project));
   assert.equal(origin, project === 'cazper' ? 'https://app.cazper.ai' : 'https://app.komizo.dev');
@@ -34,10 +43,16 @@ export async function productionJourney(project, origin, journey) {
   const api = project === 'cazper' ? 'https://api.cazper.ai' : 'https://api.komizo.dev';
   async function clerk(path, method = 'GET', body, terminal = []) {
     const response = await fetch('https://api.clerk.com/v1' + path, { method,
-      headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}`, 'Clerk-API-Version': '2026-05-12', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}`, 'Clerk-API-Version': '2026-05-12', 'Content-Type': 'application/json', 'User-Agent': 'nicodes-migration-verification' },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
     if (terminal.includes(response.status)) return null;
-    if (!response.ok) throw new Error(`Clerk ${method} request failed (HTTP ${response.status})`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      if (organizationsDisabled(response.status, method, path, error)) return { data: [], total_count: 0 };
+      const code = error?.errors?.[0]?.code;
+      const safeCode = typeof code === 'string' && /^[a-z0-9_]{1,80}$/.test(code) ? code : 'unavailable';
+      throw new Error(`Clerk ${method} request failed (HTTP ${response.status}, code ${safeCode})`);
+    }
     return response.status === 204 ? null : response.json();
   }
   const external = `${project}-engineering-verifier`;
@@ -109,7 +124,7 @@ export async function productionJourney(project, origin, journey) {
       if (project === 'komizo') assert.equal(session?.record?.clerk_id, user.id, 'application session must belong to the dedicated verifier');
       const credential = project === 'komizo' ? (session?.token ? `Bearer ${session.token}` : '') : bearer;
       assert(credential, 'the real browser must establish its application session');
-      const response = await fetch(api + path, { method, headers: { Authorization: credential, 'Content-Type': 'application/json' },
+      const response = await fetch(api + path, { method, headers: { Authorization: credential, 'Content-Type': 'application/json', 'User-Agent': 'nicodes-migration-verification' },
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
       assert(response.ok, `owned fixture request failed (HTTP ${response.status})`);
       return response.status === 204 ? null : response.json();

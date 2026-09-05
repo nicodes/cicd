@@ -21,6 +21,15 @@ class DeployedRevision(unittest.TestCase):
             with self.subTest(responses=responses), patch.object(scanner, 'api', side_effect=responses), self.assertRaises(ValueError):
                 scanner.deployed_revisions('nicodes/ormos-be')
 
+    def test_new_products_require_their_exact_repository_and_image_namespace(self):
+        for project, owner in [('gdam', 'aviorstudio'), ('termcade', 'aviorstudio'), ('astry', 'astrylogical')]:
+            refs = scanner.product_images(project, f'{owner}/{project}-be', 'a'*40)
+            self.assertTrue(all(ref.startswith(f'ghcr.io/{owner}/{project}-') for ref in refs))
+            for repository in [f'nicodes/{project}-be', f'{owner}/unrelated']:
+                with self.assertRaises(ValueError):
+                    scanner.product_images(project, repository, 'a'*40)
+        self.assertTrue(any('astry-pb:' in ref for ref in scanner.product_images('astry', 'astrylogical/astry-be', 'a'*40)))
+
 
 if __name__ == '__main__':
     unittest.main()

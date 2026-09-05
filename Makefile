@@ -14,4 +14,4 @@ check: test
 	python3 helpers/test-caddy.py
 	@for file in helpers/*.mjs helpers/*.cjs; do node --check "$$file"; done
 	actionlint
-	actionlint templates/full-stack/ci.yml templates/app-only/ci.yml
+	actionlint templates/full-stack/ci.yml templates/app-only/ci.yml templates/full-stack/bun-updates.yml templates/app-only/bun-updates.yml

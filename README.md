@@ -45,8 +45,10 @@ mode authenticates the backup's project/revision before reading registry images.
 Recovery and database settings keys must be supplied explicitly; the helper
 never extracts credentials from a production container.
 
-Weekly product restores run on a GitHub runner with recovery keys scoped to the
-production environment. Production hosts export encrypted snapshots using only
+By owner decision on 2026-09-05, automated product restores are disabled.
+Recovery private keys stay on the operator computer, outside GitHub and
+production hosts. Initial migration restore verification and manual recovery
+remain supported. Production hosts export encrypted snapshots using only
 the public certificate. The restore preflight requires 768 MiB available memory;
 the current 1 GB production hosts do not meet it alongside their live services.
 `test-restore-drill.py` exercises the same command with disposable local data and
@@ -62,3 +64,23 @@ old/new read-write compatibility proof required by the product policy.
 [Archetype templates](templates/README.md) provide the shared Make, CI, exact-tool
 and ignore-file envelope. Product scripts keep runtime and deployment behavior
 explicit; template regression tests exercise complete gates and failure propagation.
+
+## Bun update compatibility and issue-only decision
+
+GitHub Dependabot rejects the Bun 1.4.1 lockfile format (version 3). Use each
+archetype's `bun-updates.yml` as `.github/workflows/bun-updates.yml`; Dependabot
+continues covering actions, images and every Go module.
+
+Owner decision, 2026-09-05: the weekly native Bun workflow creates or updates one
+issue assigned to nicodes. It reports available direct releases and whether a
+within-range/transitive refresh is available, using only a temporary copy with
+lifecycle scripts disabled. It never publishes code, creates PRs, approves or
+merges changes, or dispatches CI. Its job has only `contents: read` and
+`issues: write`; no production environment, new app or personal token is needed.
+Open update PRs manually and run the full Test/Build gate before merging.
+
+Do not enable or broaden GitHub's combined workflow PR creation/approval setting
+for this watcher. Existing repository settings are unchanged; explicit job
+permissions apply even where a repository has broader defaults. Owner: nicodes. Review at the 2026-10-05 maintenance review, or when Dependabot supports
+the lockfile format. Any move back to automatic Bun PR creation requires a new
+owner decision; this review date does not automatically enable anything.
