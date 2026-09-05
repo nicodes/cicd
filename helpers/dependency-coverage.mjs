@@ -17,6 +17,7 @@ export function verifyDependencyCoverage(config, files, bunWorkflow) {
   const job = bunWorkflow.jobs?.update;
   assert.equal(job?.if, "github.ref == 'refs/heads/main'", 'Bun writes are restricted to main');
   assert.equal(job?.environment, undefined, 'Bun updater must not receive production secrets');
+  assert.deepEqual(job?.permissions, { contents: 'read', issues: 'write' }, 'Bun issue reporting must not grant code, PR or workflow writes');
   assert.ok(job?.steps?.some(step => step.run === 'python3 scripts/engineering/helpers/update-bun.py'), 'Pinned Bun updater must actually run');
   assert.ok(job?.steps?.some(step => step.uses?.startsWith('jdx/mise-action@')), 'Bun updater must install repository pins');
   for (const [ecosystem, directories] of required) {

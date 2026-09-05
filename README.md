@@ -65,15 +65,21 @@ old/new read-write compatibility proof required by the product policy.
 and ignore-file envelope. Product scripts keep runtime and deployment behavior
 explicit; template regression tests exercise complete gates and failure propagation.
 
-## Bun update compatibility
+## Bun update compatibility and issue-only decision
 
-GitHub Dependabot currently rejects the Bun 1.4.1 lockfile format (version 3).
-Use each archetype's `bun-updates.yml` as `.github/workflows/bun-updates.yml`;
-Dependabot continues to cover actions, images and every Go module. The native
-workflow uses the repository-pinned Bun with lifecycle scripts disabled, records
-updates outside manifest ranges in one owned issue, and opens a grouped PR for
-within-range/transitive refreshes. Every Bun PR requires owner review and the
-complete Test/Build gate; it never uses the Dependabot auto-merge path. Explicit
-CI dispatch handles GitHub's suppression of token-created PR events. No additional
-app installation, PAT or production secret is needed. Restore the Dependabot Bun
-entry only after a real update run proves upstream lockfile compatibility.
+GitHub Dependabot rejects the Bun 1.4.1 lockfile format (version 3). Use each
+archetype's `bun-updates.yml` as `.github/workflows/bun-updates.yml`; Dependabot
+continues covering actions, images and every Go module.
+
+Owner decision, 2026-09-05: the weekly native Bun workflow creates or updates one
+issue assigned to nicodes. It reports available direct releases and whether a
+within-range/transitive refresh is available, using only a temporary copy with
+lifecycle scripts disabled. It never publishes code, creates PRs, approves or
+merges changes, or dispatches CI. Its job has only `contents: read` and
+`issues: write`; no production environment, new app or personal token is needed.
+Open update PRs manually and run the full Test/Build gate before merging.
+
+Keep GitHub's combined workflow PR creation/approval setting disabled. Owner:
+nicodes. Review at the 2026-10-05 maintenance review, or when Dependabot supports
+the lockfile format. Any move back to automatic Bun PR creation requires a new
+owner decision; this review date does not automatically enable anything.

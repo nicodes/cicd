@@ -18,6 +18,7 @@ verifyDependencyCoverage(data.config, data.files, data.bun);
         ]
 
         workflow = {'on': {'schedule': [{'cron': '17 10 * * 1'}]}, 'jobs': {'update': {
+            'permissions': {'contents': 'read', 'issues': 'write'},
             'if': "github.ref == 'refs/heads/main'", 'steps': [
                 {'uses': 'jdx/mise-action@'+'a'*40},
                 {'run': 'python3 scripts/engineering/helpers/update-bun.py'}]}}}
@@ -38,5 +39,9 @@ verifyDependencyCoverage(data.config, data.files, data.bun);
             self.assertNotEqual(check([], updates[:index] + updates[index+1:]).returncode, 0)
 
         self.assertNotEqual(check([], bun={}).returncode, 0)
+        for permission in ['contents', 'pull-requests', 'actions']:
+            excessive = json.loads(json.dumps(workflow))
+            excessive['jobs']['update']['permissions'][permission] = 'write'
+            self.assertNotEqual(check([], bun=excessive).returncode, 0)
         workflow['jobs']['update']['environment'] = 'production'
         self.assertNotEqual(check([]).returncode, 0)

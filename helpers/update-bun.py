@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Use the repository's Bun for update inventory and an owner-reviewed refresh PR."""
+"""Report Bun updates in one owned issue; never create branches or PRs."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -86,68 +85,40 @@ def prepare(root):
     return inventory, changes
 
 
-def publish(root, repo, base, inventory, changes):
+def publish(repo, base, inventory, changes):
     if not re.fullmatch(r'nicodes/[a-z0-9-]+', repo) or not re.fullmatch(r'[a-f0-9]{40}', base):
-        raise ValueError('Invalid publication target')
-    if not set(changes).issubset({'app/package.json', 'app/bun.lock'}):
-        raise ValueError('Only Bun manifest and lockfile changes may be published')
+        raise ValueError('Invalid issue target')
     if api(repo, 'git/ref/heads/main')['object']['sha'] != base:
-        raise ValueError('Main changed; rerun the update workflow on current main')
+        raise ValueError('Main changed; rerun the update inventory on current main')
+    if not inventory and not changes:
+        print('No available updates or lockfile refresh. Existing issues remain for owner review.')
+        return
     title = 'Bun maintenance: available dependency updates'
-    existing = [i for i in api(repo, 'issues?state=open&per_page=100') if i['title'] == title and 'pull_request' not in i]
-    if inventory:
-        rows = ''.join(f"| `{i['package']}` | `{i['current']}` | `{i['update']}` | `{i['latest']}` |\n" for i in inventory)
-        body = ('Owner: @nicodes\n\nThe pinned Bun found updates. `Update` respects the current manifest range; '
-                '`Latest` also shows releases outside that range. Review those releases separately.\n\n'
-                '| Package | Current | Update | Latest |\n|---|---|---|---|\n'+rows+
-                '\nWithin-range and transitive refreshes are proposed in an owner-reviewed PR. '
-                'Authentication/cryptography, PocketBase, pre-1.0 minor and major updates always require review. '
-                'Every resulting PR must pass the complete Test and Build gates.\n')
-        if len(body) > 50000:
-            raise ValueError('Update inventory exceeds the issue size limit')
-        if existing:
-            run(['gh', 'api', f'repos/{repo}/issues/{min(i["number"] for i in existing)}', '--method', 'PATCH', '--input', '-'],
-                input=json.dumps({'body': body, 'assignees': ['nicodes']}))
-        else:
-            api(repo, 'issues', {'title': title, 'body': body, 'assignees': ['nicodes']})
-    if not changes:
-        print('No within-range lockfile or manifest changes; inventory recorded.')
-        return
-    pending = api(repo, 'pulls?state=open&base=main&per_page=100')
-    for pr in pending:
-        if not pr['head']['ref'].startswith('automation/bun-refresh-'):
-            continue
-        if pr['head'].get('repo', {}).get('full_name') != repo:
-            continue
-        checks = api(repo, f'commits/{pr["head"]["sha"]}/check-runs?per_page=100')
-        if not {'Test', 'Build'}.issubset({check['name'] for check in checks['check_runs']}):
-            api(repo, 'actions/workflows/ci.yml/dispatches', {'ref': pr['head']['ref']})
-        print('An owner-reviewed Bun refresh PR is already open; its branch is preserved.')
-        return
-    digest = hashlib.sha256(json.dumps(changes, sort_keys=True).encode()).hexdigest()[:12]
-    branch = f'automation/bun-refresh-{base[:12]}-{digest}'
-    commit = api(repo, 'git/commits/'+base)
-    tree = api(repo, 'git/trees', {'base_tree': commit['tree']['sha'], 'tree': [
-        {'path': name, 'mode': '100644', 'type': 'blob', 'content': content} for name,content in changes.items()]})
-    refs = api(repo, 'git/matching-refs/heads/'+branch)
-    exact = [ref for ref in refs if ref['ref'] == 'refs/heads/'+branch]
-    if exact:
-        prior = api(repo, 'git/commits/'+exact[0]['object']['sha'])
-        if prior['tree']['sha'] != tree['sha'] or [p['sha'] for p in prior['parents']] != [base]:
-            raise ValueError('Existing automation branch changed; owner review required')
+    existing = json.loads(run(['gh', 'issue', 'list', '--repo', repo, '--state', 'open',
+        '--search', 'in:title "'+title+'"', '--limit', '100', '--json', 'number,title']))
+    existing = [item for item in existing if item['title'] == title]
+    rows = ''.join(f"| `{i['package']}` | `{i['current']}` | `{i['update']}` | `{i['latest']}` |\n" for i in inventory)
+    refresh = ('A within-range/transitive refresh would change: '+', '.join('`'+name+'`' for name in sorted(changes))+'.'
+               if changes else 'No within-range lockfile or manifest refresh was found.')
+    body = ('Owner: @nicodes\n\nThe pinned Bun found dependency maintenance work. `Update` respects the '
+            'current manifest range; `Latest` also shows releases outside that range.\n\n'
+            '| Package | Current | Update | Latest |\n|---|---|---|---|\n'+rows+'\n'+refresh+'\n\n'
+            'Owner decision (2026-09-05): this workflow creates or updates this issue only. '
+            'It never creates branches or PRs, approves changes, merges or dispatches CI. '
+            'Review the updates and open a PR manually. Run the complete `make check` and '
+            'require passing Test and Build checks before merging. Authentication/cryptography, '
+            'PocketBase, pre-1.0 minor and major updates require owner review.\n\n'
+            'Revisit automated Bun PR creation with nicodes at the 2026-10-05 maintenance review; '
+            'do not enable GitHub’s combined workflow PR creation/approval setting automatically.\n')
+    if len(body) > 50000:
+        raise ValueError('Update inventory exceeds the issue size limit')
+    if existing:
+        run(['gh', 'api', f'repos/{repo}/issues/{min(i["number"] for i in existing)}', '--method', 'PATCH', '--input', '-'],
+            input=json.dumps({'body': body, 'assignees': ['nicodes']}))
+        print('Updated the existing owned Bun maintenance issue.')
     else:
-        new = api(repo, 'git/commits', {'message': 'Refresh Bun dependencies within declared ranges', 'tree': tree['sha'], 'parents': [base]})
-        api(repo, 'git/refs', {'ref': 'refs/heads/'+branch, 'sha': new['sha']})
-    pr = api(repo, 'pulls', {'title': 'Refresh Bun dependencies within declared ranges', 'head': branch, 'base': 'main',
-        'body': 'The repository-pinned Bun refreshed `app/package.json` and `app/bun.lock` with lifecycle scripts disabled. '
-                'This grouped refresh requires owner review, including sensitive and pre-1.0 updates. '
-                'It is never eligible for the Dependabot auto-merge path. Complete Test and Build checks are mandatory. '
-                'Updates beyond declared ranges are listed in the owned Bun maintenance issue.'})
-    api(repo, f'issues/{pr["number"]}/assignees', {'assignees': ['nicodes']})
-    # GITHUB_TOKEN-created commits do not trigger push/PR workflows. Explicit
-    # dispatch runs the same full CI on the generated branch, without production secrets.
-    api(repo, 'actions/workflows/ci.yml/dispatches', {'ref': branch})
-    print(f'Created owner-reviewed PR #{pr["number"]} and dispatched complete CI.')
+        issue = api(repo, 'issues', {'title': title, 'body': body, 'assignees': ['nicodes']})
+        print(f'Created owned Bun maintenance issue #{issue["number"]}.')
 
 
 def main():
@@ -162,8 +133,8 @@ def main():
     if not args.dry_run:
         if os.environ.get('GITHUB_REF') != 'refs/heads/main':
             raise ValueError('Bun update publication is restricted to main')
-        publish(root, os.environ['GITHUB_REPOSITORY'], run(['git', 'rev-parse', 'HEAD']).strip(), inventory, changes)
-    print(f'Bun inventory: {len(inventory)} available updates; {len(changes)} proposed files.')
+        publish(os.environ['GITHUB_REPOSITORY'], run(['git', 'rev-parse', 'HEAD']).strip(), inventory, changes)
+    print(f'Bun inventory: {len(inventory)} available updates; {len(changes)} files would need a manual refresh.')
 
 
 if __name__ == '__main__':
