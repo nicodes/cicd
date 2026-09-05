@@ -45,8 +45,10 @@ mode authenticates the backup's project/revision before reading registry images.
 Recovery and database settings keys must be supplied explicitly; the helper
 never extracts credentials from a production container.
 
-Weekly product restores run on a GitHub runner with recovery keys scoped to the
-production environment. Production hosts export encrypted snapshots using only
+By owner decision on 2026-09-05, automated product restores are disabled.
+Recovery private keys stay on the operator computer, outside GitHub and
+production hosts. Initial migration restore verification and manual recovery
+remain supported. Production hosts export encrypted snapshots using only
 the public certificate. The restore preflight requires 768 MiB available memory;
 the current 1 GB production hosts do not meet it alongside their live services.
 `test-restore-drill.py` exercises the same command with disposable local data and
@@ -62,3 +64,16 @@ old/new read-write compatibility proof required by the product policy.
 [Archetype templates](templates/README.md) provide the shared Make, CI, exact-tool
 and ignore-file envelope. Product scripts keep runtime and deployment behavior
 explicit; template regression tests exercise complete gates and failure propagation.
+
+## Bun update compatibility
+
+GitHub Dependabot currently rejects the Bun 1.4.1 lockfile format (version 3).
+Use each archetype's `bun-updates.yml` as `.github/workflows/bun-updates.yml`;
+Dependabot continues to cover actions, images and every Go module. The native
+workflow uses the repository-pinned Bun with lifecycle scripts disabled, records
+updates outside manifest ranges in one owned issue, and opens a grouped PR for
+within-range/transitive refreshes. Every Bun PR requires owner review and the
+complete Test/Build gate; it never uses the Dependabot auto-merge path. Explicit
+CI dispatch handles GitHub's suppression of token-created PR events. No additional
+app installation, PAT or production secret is needed. Restore the Dependabot Bun
+entry only after a real update run proves upstream lockfile compatibility.
