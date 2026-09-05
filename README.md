@@ -79,7 +79,8 @@ merges changes, or dispatches CI. Its job has only `contents: read` and
 `issues: write`; no production environment, new app or personal token is needed.
 Open update PRs manually and run the full Test/Build gate before merging.
 
-Keep GitHub's combined workflow PR creation/approval setting disabled. Owner:
-nicodes. Review at the 2026-10-05 maintenance review, or when Dependabot supports
+Do not enable or broaden GitHub's combined workflow PR creation/approval setting
+for this watcher. Existing repository settings are unchanged; explicit job
+permissions apply even where a repository has broader defaults. Owner: nicodes. Review at the 2026-10-05 maintenance review, or when Dependabot supports
 the lockfile format. Any move back to automatic Bun PR creation requires a new
 owner decision; this review date does not automatically enable anything.
