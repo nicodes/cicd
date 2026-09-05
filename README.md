@@ -22,3 +22,7 @@ file's SHA256. Update the complete snapshot together and run the product's full
 
 The normative standard remains the September4 workspace standardization plan.
 Shared rollout work is tracked in nicodes/komizo-be#215.
+
+`helpers/release.py` records the release archive hash and exact image IDs after
+Build, then verifies the project, full commit, components, archive and loaded
+images before publication. Publish loads those artifacts and never rebuilds.
