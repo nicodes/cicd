@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { resolve, join, extname, sep } from 'node:path';
 
 
-export async function browserGate(project, journey) {
+export async function browserGate(project, journey, { routeFile = path => path } = {}) {
 const require = createRequire(resolve('app/package.json'));
 const { chromium } = require('playwright');
 const root = process.cwd();
@@ -94,7 +94,7 @@ try {
   const webRoot = resolve('app/dist-e2e');
   const web = await listen(createServer(async (request, response) => {
     try {
-      const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+      const pathname = routeFile(decodeURIComponent(new URL(request.url, 'http://localhost').pathname));
       let file = resolve(webRoot, '.' + pathname);
       if (file !== webRoot && !file.startsWith(webRoot + sep)) { response.writeHead(403).end(); return; }
       try { if ((await stat(file)).isDirectory()) file = join(file, 'index.html'); }
