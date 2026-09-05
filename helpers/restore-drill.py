@@ -97,6 +97,7 @@ def drill(project, export, key, pull=False):
         environment = root/'clone.env'
         environment.write_text(''.join(f'{name}={value}\n' for name, value in env.items()))
         environment.chmod(0o600)
+        settings_flags = ['--encryptionEnv=PB_ENCRYPTION_KEY'] if project == 'komizo' else []
         prefix = project+'-restore-'+secrets.token_hex(8)
         common = ['--read-only', '--user', f'{uid}:{uid}', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
                   '--cpus=1', '--pids-limit=128', '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m']
@@ -108,10 +109,10 @@ def drill(project, export, key, pull=False):
             containers.append(bootstrap)
             docker('run', '--name', bootstrap, '--network=none', *common, '--memory=192m', *private_env, *mount,
                    '--entrypoint', config['binary'], images[config['db']], 'superuser', 'upsert',
-                   'restore@verification.invalid', password, '--dir=/app/pb_data', timeout=180)
+                   'restore@verification.invalid', password, '--dir=/app/pb_data', *settings_flags, timeout=180)
             db = prefix+'-db'
             containers.append(db)
-            command = ['serve', f'--http=127.0.0.1:{config["port"]}', '--dir=/app/pb_data']
+            command = ['serve', f'--http=127.0.0.1:{config["port"]}', '--dir=/app/pb_data', *settings_flags]
             if project == 'ormos':
                 command += ['--automigrate=false', '--hooksDir=/app/pb_hooks', '--migrationsDir=/app/pb_migrations']
             docker('run', '-d', '--name', db, '--network=none', *common, '--memory=192m', *private_env, *mount,
