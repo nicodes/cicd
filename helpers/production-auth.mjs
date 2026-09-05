@@ -27,6 +27,15 @@ export function verifySyntheticUser(user, project) {
   assert.equal(user.primary_email_address_id, email.id);
 }
 
+// A disabled Organizations feature cannot confer organization membership.
+// Match the exact documented code and endpoint; generic 403s remain failures.
+export function organizationsDisabled(status, method, path, error) {
+  return status === 403 && method === 'GET'
+    && /^\/users\/user_[A-Za-z0-9]+\/organization_memberships\?limit=1$/.test(path)
+    && error?.errors?.length === 1
+    && error.errors[0].code === 'organization_not_enabled_in_instance';
+}
+
 export async function productionJourney(project, origin, journey) {
   assert(['cazper', 'komizo'].includes(project));
   assert.equal(origin, project === 'cazper' ? 'https://app.cazper.ai' : 'https://app.komizo.dev');
@@ -39,6 +48,7 @@ export async function productionJourney(project, origin, journey) {
     if (terminal.includes(response.status)) return null;
     if (!response.ok) {
       const error = await response.json().catch(() => null);
+      if (organizationsDisabled(response.status, method, path, error)) return { data: [], total_count: 0 };
       const code = error?.errors?.[0]?.code;
       const safeCode = typeof code === 'string' && /^[a-z0-9_]{1,80}$/.test(code) ? code : 'unavailable';
       throw new Error(`Clerk ${method} request failed (HTTP ${response.status}, code ${safeCode})`);
