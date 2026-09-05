@@ -5,6 +5,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import gzip
+import fcntl
+import ipaddress
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -16,6 +18,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import urllib.request
 
 MAX_FILES = 100000
 MAX_BYTES = 16 * 1024**3
@@ -125,12 +128,38 @@ def resumed_health(container, boundary, timeout=90):
     raise TimeoutError('no successful health probe started after the writer resumed')
 
 
-def snapshot(container, mount, destination, exclude_auxiliary=False):
+def direct_health(container, port, timeout=90):
+    """Probe the inspected writer directly when an older image has no HEALTHCHECK."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = inspect(container)
+        if not info['State']['Running'] or info['State']['Paused']:
+            raise ValueError('database writer did not resume')
+        addresses = [value['IPAddress'] for value in info['NetworkSettings']['Networks'].values()
+                     if value.get('IPAddress')]
+        if len(addresses) != 1 or not ipaddress.ip_address(addresses[0]).is_private:
+            raise ValueError('writer must have one private container address for a direct health probe')
+        try:
+            # Each request starts after unpause. Do not use a cached Docker status.
+            request = urllib.request.Request(f'http://{addresses[0]}:{port}/api/health')
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=3) as response:
+                if response.status == 200 and time.monotonic() < deadline:
+                    return
+        except OSError:
+            pass
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
+    raise TimeoutError('database writer did not answer a fresh post-resume health request')
+
+
+def snapshot(container, mount, destination, exclude_auxiliary=False, probe_port=None):
     info = inspect(container)
     state = info['State']
     if not state['Running'] or state['Paused'] or state.get('Restarting'):
         raise ValueError('snapshot requires a running, unpaused database writer')
-    if not info.get('Config', {}).get('Healthcheck', {}).get('Test'):
+    if probe_port is not None and not 1 <= probe_port <= 65535:
+        raise ValueError('invalid direct health probe port')
+    if probe_port is None and not info.get('Config', {}).get('Healthcheck', {}).get('Test'):
         raise ValueError('database writer must have a configured healthcheck')
     matches = [entry for entry in info['Mounts'] if entry['Destination'] == mount and entry['Type'] in {'volume', 'bind'}]
     if len(matches) != 1:
@@ -182,7 +211,10 @@ def snapshot(container, mount, destination, exclude_auxiliary=False):
             if paused:
                 docker('unpause', writer)
                 boundary = time.time_ns()
-                resumed_health(writer, boundary)
+                if probe_port is None:
+                    resumed_health(writer, boundary)
+                else:
+                    direct_health(writer, probe_port)
         restored = pending / 'restored'
         restored.mkdir(mode=0o700)
         evidence = restore(archive, restored)
@@ -236,6 +268,7 @@ def main():
     create.add_argument('--mount', required=True)
     create.add_argument('--destination', type=Path, required=True)
     create.add_argument('--exclude-auxiliary', action='store_true')
+    create.add_argument('--probe-port', type=int)
     verify = commands.add_parser('verify')
     verify.add_argument('archive', type=Path)
     verify.add_argument('--sha256', required=True)
@@ -253,7 +286,10 @@ def main():
     for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
         signal.signal(number, interrupted)
     if args.operation == 'create':
-        snapshot(args.container, args.mount, args.destination, args.exclude_auxiliary)
+        args.destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with (args.destination / '.snapshot.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            snapshot(args.container, args.mount, args.destination, args.exclude_auxiliary, args.probe_port)
     elif args.operation == 'seal':
         print(seal(args.directory, args.recipient))
     elif args.operation == 'unseal':
