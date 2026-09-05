@@ -36,7 +36,7 @@ def docker(*args, input=None, timeout=60):
     return result.stdout.strip()
 
 
-def drill(project, export, key):
+def drill(project, export, key, pull=False):
     snapshot = helper('snapshot')
     receiver = helper('receive-backup')
     config = {
@@ -65,9 +65,13 @@ def drill(project, export, key):
         images = {}
         for component in components:
             image = f'ghcr.io/nicodes/{project}-{component}:{revision}'
+            if pull:
+                # Authenticate the encrypted project/revision before pulling.
+                # Registry credentials stay on the host, outside every clone.
+                docker('pull', '--quiet', image, timeout=180)
             images[component] = json.loads(docker('image', 'inspect', image))[0]['Id']
-        if images[config['db']] != evidence['image_id']:
-            raise ValueError('restored database image differs from authenticated snapshot metadata')
+            if component == config['db'] and images[component] != evidence['image_id']:
+                raise ValueError('restored database image differs from authenticated snapshot metadata')
         # Root-host installations give the clone to nobody. Local verification
         # uses the caller's UID, still nonroot in the container.
         uid = os.getuid() if os.getuid() else 65534
@@ -88,15 +92,12 @@ def drill(project, export, key):
         if project == 'komizo':
             encryption = os.environ.get('PB_ENCRYPTION_KEY')
             if encryption is None:
-                live = json.loads(docker('inspect', 'komizo-service-1'))[0]['Config']['Env']
-                found = [item.partition('=')[2] for item in live if item.startswith('PB_ENCRYPTION_KEY=')]
-                if len(found) != 1 or not found[0]:
-                    raise ValueError('the settings encryption key is unavailable for the restore drill')
-                encryption = found[0]
+                raise ValueError('supply the settings encryption key explicitly for the restore drill')
             env['PB_ENCRYPTION_KEY'] = encryption
         environment = root/'clone.env'
         environment.write_text(''.join(f'{name}={value}\n' for name, value in env.items()))
         environment.chmod(0o600)
+        settings_flags = ['--encryptionEnv=PB_ENCRYPTION_KEY'] if project == 'komizo' else []
         prefix = project+'-restore-'+secrets.token_hex(8)
         common = ['--read-only', '--user', f'{uid}:{uid}', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
                   '--cpus=1', '--pids-limit=128', '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m']
@@ -108,10 +109,10 @@ def drill(project, export, key):
             containers.append(bootstrap)
             docker('run', '--name', bootstrap, '--network=none', *common, '--memory=192m', *private_env, *mount,
                    '--entrypoint', config['binary'], images[config['db']], 'superuser', 'upsert',
-                   'restore@verification.invalid', password, '--dir=/app/pb_data', timeout=180)
+                   'restore@verification.invalid', password, '--dir=/app/pb_data', *settings_flags, timeout=180)
             db = prefix+'-db'
             containers.append(db)
-            command = ['serve', f'--http=127.0.0.1:{config["port"]}', '--dir=/app/pb_data']
+            command = ['serve', f'--http=127.0.0.1:{config["port"]}', '--dir=/app/pb_data', *settings_flags]
             if project == 'ormos':
                 command += ['--automigrate=false', '--hooksDir=/app/pb_hooks', '--migrationsDir=/app/pb_migrations']
             docker('run', '-d', '--name', db, '--network=none', *common, '--memory=192m', *private_env, *mount,
@@ -175,6 +176,7 @@ def main():
     parser.add_argument('--export', type=Path, required=True)
     parser.add_argument('--key', type=Path, required=True)
     parser.add_argument('--lock', type=Path, help='root-owned host lock for scheduled drills')
+    parser.add_argument('--pull', action='store_true', help='pull authenticated exact-revision images on the restore runner')
     args = parser.parse_args()
     os.umask(0o077)
     def interrupted(number, _frame):
@@ -201,7 +203,7 @@ def main():
                         if total > 17 * 1024**3 + 1024**2 or shutil.disk_usage(directory).free < len(block) + 512 * 1024**2:
                             raise ValueError('restore input exceeds the size or disk headroom bound')
                         output.write(block)
-            print(json.dumps(drill(args.project, export, args.key), indent=2))
+            print(json.dumps(drill(args.project, export, args.key, args.pull), indent=2))
     signal.alarm(0)
 
 
