@@ -37,7 +37,12 @@ export async function productionJourney(project, origin, journey) {
       headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}`, 'Clerk-API-Version': '2026-05-12', 'Content-Type': 'application/json', 'User-Agent': 'nicodes-migration-verification' },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
     if (terminal.includes(response.status)) return null;
-    if (!response.ok) throw new Error(`Clerk ${method} request failed (HTTP ${response.status})`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      const code = error?.errors?.[0]?.code;
+      const safeCode = typeof code === 'string' && /^[a-z0-9_]{1,80}$/.test(code) ? code : 'unavailable';
+      throw new Error(`Clerk ${method} request failed (HTTP ${response.status}, code ${safeCode})`);
+    }
     return response.status === 204 ? null : response.json();
   }
   const external = `${project}-engineering-verifier`;
