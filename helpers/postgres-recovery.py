@@ -74,7 +74,7 @@ def validate_manifest(value, expected_project=None, expected_revision=None):
         raise ValueError('unsupported PostgreSQL recovery major version')
     roles = value['roles']
     if not isinstance(roles, list) or not 1 <= len(roles) <= 8 or any(
-            not isinstance(role, str) or not re.fullmatch(re.escape(project) + r'_[a-z][a-z0-9_]{0,40}', role)
+            not isinstance(role, str) or not re.fullmatch(re.escape(project) + r'(?:_[a-z][a-z0-9_]{0,40})?', role)
             for role in roles) or len(set(roles)) != len(roles):
         raise ValueError('invalid PostgreSQL application roles')
     images = value['images']
