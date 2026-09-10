@@ -54,6 +54,12 @@ the current 1 GB production hosts do not meet it alongside their live services.
 `test-restore-drill.py` exercises the same command with disposable local data and
 keys. Production data or credentials are not needed for the fixture.
 
+[PostgreSQL logical recovery](docs/postgresql-recovery.md) adds explicit manifest,
+archive and isolated database-restore stages without weakening the PocketBase
+default. Product code owns consistent database/file capture and application
+verification. A parsed or decrypted archive is not reported as a restored
+application. `make check` now also requires local Docker for the pinned PG control.
+
 `scan-image.py` scans actual runtime Go binaries; `scan-deployed.py` covers both
 the latest deployment attempt and the last successful revision. Caddy is built
 from the locked helper module with upstream race tests and a live binary scan.
