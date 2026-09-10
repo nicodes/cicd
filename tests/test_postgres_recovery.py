@@ -95,6 +95,9 @@ class PostgreSQLArchiveBoundaries(unittest.TestCase):
     def test_wrong_project_revision_image_backend_and_manifest_types(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = payload(Path(directory)/'payload')
+            with_owner_role = copy.deepcopy(manifest)
+            with_owner_role['roles'].append('cazper')
+            pg.validate_manifest(with_owner_role)
             for mutate in [
                 lambda m: m.update(project='another-product'),
                 lambda m: m.update(project=[]),
@@ -191,6 +194,7 @@ CREATE ROLE cazper_runtime LOGIN;
 CREATE TABLE preserved(id integer PRIMARY KEY,value text NOT NULL);
 INSERT INTO preserved VALUES(1,'captured');
 GRANT SELECT ON preserved TO cazper_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE cazper_owner IN SCHEMA public GRANT SELECT ON TABLES TO cazper_runtime;
 CREATE FUNCTION private_count() RETURNS bigint LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS 'SELECT count(*) FROM public.preserved';
 REVOKE ALL ON FUNCTION private_count() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION private_count() TO cazper_runtime;

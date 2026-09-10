@@ -80,7 +80,9 @@ The manifest has exactly these fields:
 ```
 
 The example is a schema illustration, not a runnable manifest. Supported projects
-are Cazper, Ormos and Komizo; role names must use their project prefix. Images are
+are Cazper, Ormos and Komizo; role names must equal the project or use its prefix.
+Include source owner roles referenced by default-privilege ACLs, as well as the
+application login roles. Images are
 bound to the project/revision, and the engine must use a digest-pinned official
 PostgreSQL reference. Current live controls use PostgreSQL 18.6.
 
