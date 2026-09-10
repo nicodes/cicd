@@ -12,6 +12,22 @@ Products vendor `helpers/` and `tests/` beneath `scripts/engineering/`, with a
 file's SHA256. Update the complete snapshot together and run the product's full
 `make check`. No runtime network fetch of helper code is needed.
 
+For an existing pinned product snapshot, use the reviewed local source checkout:
+
+```sh
+python3 helpers/vendor-snapshot.py --repository /path/to/cicd \
+  --revision FULL_REVIEWED_COMMIT_SHA \
+  --destination /path/to/product/scripts/engineering
+```
+
+This reads the complete committed Git tree, not uncommitted helper changes. It
+refuses modified contents, unlisted files and symlinks in the destination, and
+regenerates the full hash inventory. It neither fetches nor establishes that a
+commit has been reviewed: the operator supplies that decision. Do not edit the
+destination concurrently. If interrupted between directory renames, the previous
+snapshot remains in a sibling `.engineering-update-*/previous` directory. Run
+the product's full gate afterward; updating the pin is not compatibility proof.
+
 - `dev.py`: live supervisor and authenticated local stop socket; no port-based
   killing and no persisted PID used as shutdown authority.
 - `export-web.py`: clean, bounded Expo export; requires exit0, HTML and JS.
