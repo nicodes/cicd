@@ -29,6 +29,8 @@ def receive(archive, target):
     receipt = json.loads((target / 'receipt.json').read_text())
     if receipt.get('format') != 1:
         raise ValueError('unknown encrypted envelope format')
+    if receipt.get('backend', 'pocketbase') not in {'pocketbase', 'postgresql'}:
+        raise ValueError('unknown encrypted recovery backend')
     for key in ['archive_sha256', 'ciphertext_sha256']:
         if not isinstance(receipt.get(key), str) or not re.fullmatch(r'[a-f0-9]{64}', receipt[key]):
             raise ValueError('invalid export checksum')
