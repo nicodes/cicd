@@ -36,7 +36,7 @@ def docker(*args, input=None, timeout=60):
     return result.stdout.strip()
 
 
-def drill(project, export, key, pull=False):
+def drill(project, export, key, pull=False, *, application_check=None, expected_revision=None):
     snapshot = helper('snapshot')
     receiver = helper('receive-backup')
     config = {
@@ -63,10 +63,29 @@ def drill(project, export, key, pull=False):
         restored = root/'pb_data'
         restored.mkdir(mode=0o700)
         evidence = snapshot.unseal(root/'encrypted', key, restored)
+        if evidence.get('backend') == 'postgresql':
+            if not callable(application_check):
+                raise ValueError('PostgreSQL recovery requires a product-owned application verification callback')
+            postgres = helper('postgres-recovery')
+            manifest = postgres.validate_manifest(evidence['postgresql'], project, expected_revision)
+            images = postgres.application_images(manifest, pull)
+            with postgres.restored_database(restored, project, manifest['revision'], pull=pull) as clone:
+                checks = application_check(clone, restored, images)
+                required = {'api_boot', 'worker_boot', 'frontend_artifact', 'application_checks', 'application_cleanup'}
+                if not isinstance(checks, dict) or any(checks.get(name) != 'passed' for name in required):
+                    raise ValueError('PostgreSQL application recovery verification is incomplete')
+                report.update({name: checks[name] for name in required})
+                report.update({'backend': 'postgresql', 'revision': manifest['revision'],
+                               'images': {'db': clone['engine'], **images},
+                               'archive_sha256': evidence['archive_sha256'], 'database_restore': 'passed'})
+            report['cleanup'] = 'passed'
+            return report
         match = re.fullmatch(rf'ghcr.io/{owner}/{project}-{config["db"]}:([a-f0-9]{{40}})', evidence['image_reference'])
         if not match:
             raise ValueError('authenticated snapshot image does not belong to this product')
         revision = match[1]
+        if expected_revision is not None and revision != expected_revision:
+            raise ValueError('authenticated snapshot revision differs from requested revision')
         components = [config['db'], 'gate'] + ([] if project == 'komizo' else ['api'])
         images = {}
         for component in components:
