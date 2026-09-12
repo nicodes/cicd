@@ -42,7 +42,7 @@ The central manifest parser checks the capture declaration, not the truth of a
 producer's transaction/lease protocol. Product concurrency tests must establish
 that separately. A directory copy plus an unrelated dump is not this protocol.
 
-## Version 1 payload
+## Version 2 payload
 
 Top-level files are `postgresql.json`, `database.dump` and explicitly inventoried
 regular files below `files/` and `secrets/`. Links, traversal, duplicate manifest
@@ -52,7 +52,7 @@ The manifest has exactly these fields:
 
 ```json
 {
-  "format": "nicodes-postgresql-logical-v1",
+  "format": "nicodes-postgresql-logical-v2",
   "project": "cazper",
   "revision": "<40 lowercase hex characters>",
   "database": "cazper",
@@ -64,7 +64,9 @@ The manifest has exactly these fields:
   "roles": ["cazper_runtime", "cazper_worker"],
   "images": {
     "api": {"reference": "ghcr.io/nicodes/cazper-api:<revision>", "image_id": "sha256:<image ID>"},
-    "gate": {"reference": "ghcr.io/nicodes/cazper-gate:<revision>", "image_id": "sha256:<image ID>"}
+    "worker": {"reference": "ghcr.io/nicodes/cazper-worker:<revision>", "image_id": "sha256:<image ID>"},
+    "gate": {"reference": "ghcr.io/nicodes/cazper-gate:<revision>", "image_id": "sha256:<image ID>"},
+    "assets": {"reference": "ghcr.io/nicodes/cazper-assets:<revision>", "image_id": "sha256:<image ID>"}
   },
   "capture": {
     "snapshot_id": "<pg_export_snapshot result>",
@@ -82,8 +84,9 @@ The manifest has exactly these fields:
 The example is a schema illustration, not a runnable manifest. Supported projects
 are Cazper, Ormos and Komizo; role names must equal the project or use its prefix.
 Include source owner roles referenced by default-privilege ACLs, as well as the
-application login roles. Images are
-bound to the project/revision, and the engine must use a digest-pinned official
+application login roles. API, worker, frontend and the retained content-hashed
+asset set are independent authenticated artifacts, each bound to the same
+project/revision; none can alias or be inferred from another. The engine must use a digest-pinned official
 PostgreSQL reference. Current live controls use PostgreSQL 18.6.
 
 ## Distinct verification stages

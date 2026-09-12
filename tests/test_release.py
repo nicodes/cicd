@@ -8,6 +8,32 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
 class ReleaseIdentity(unittest.TestCase):
+    def test_worker_is_an_independent_immutable_release_artifact(self):
+        revision = 'a'*40
+        refs = release.references('ctcalc', revision, ['worker'])
+        self.assertEqual(refs, [f'ghcr.io/nicodes/ctcalc-worker:{revision}'])
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory)/'images.tar.gz'
+            archive.write_bytes(b'worker artifact')
+            manifest = {'project': 'ctcalc', 'revision': revision,
+                        'images': {refs[0]: 'sha256:'+'b'*64},
+                        'archive_sha256': release.digest(archive)}
+            self.assertEqual(release.validate(manifest, 'ctcalc', revision, ['worker'], archive), refs)
+            with self.assertRaises(ValueError):
+                release.validate(manifest, 'ctcalc', revision, ['worker', 'gate'], archive)
+
+    def test_retained_browser_assets_are_an_independent_immutable_artifact(self):
+        revision = 'a'*40
+        refs = release.references('ctcalc', revision, ['assets'])
+        self.assertEqual(refs, [f'ghcr.io/nicodes/ctcalc-assets:{revision}'])
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory)/'images.tar.gz'
+            archive.write_bytes(b'content-hashed browser assets')
+            manifest = {'project': 'ctcalc', 'revision': revision,
+                        'images': {refs[0]: 'sha256:'+'b'*64},
+                        'archive_sha256': release.digest(archive)}
+            self.assertEqual(release.validate(manifest, 'ctcalc', revision, ['assets'], archive), refs)
+
     def test_artifact_identity_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory)/'images.tar.gz'
@@ -28,7 +54,9 @@ class ReleaseIdentity(unittest.TestCase):
                 release.validate(manifest, 'ctcalc', revision, ['gate', 'config'], archive)
 
     def test_mutable_or_undeclared_references_are_refused(self):
-        for revision, components in [('latest', ['gate']), ('a'*40, []), ('a'*40, ['gate', 'gate']), ('a'*40, ['other'])]:
+        for revision, components in [('latest', ['gate']), ('latest', ['worker']), ('latest', ['assets']), ('a'*40, []),
+                                     ('a'*40, ['gate', 'gate']), ('a'*40, ['worker', 'worker']),
+                                     ('a'*40, ['worker-extra'])]:
             with self.assertRaises(ValueError):
                 release.references('ctcalc', revision, components)
 
