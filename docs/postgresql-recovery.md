@@ -65,7 +65,8 @@ The manifest has exactly these fields:
   "images": {
     "api": {"reference": "ghcr.io/nicodes/cazper-api:<revision>", "image_id": "sha256:<image ID>"},
     "worker": {"reference": "ghcr.io/nicodes/cazper-worker:<revision>", "image_id": "sha256:<image ID>"},
-    "gate": {"reference": "ghcr.io/nicodes/cazper-gate:<revision>", "image_id": "sha256:<image ID>"}
+    "gate": {"reference": "ghcr.io/nicodes/cazper-gate:<revision>", "image_id": "sha256:<image ID>"},
+    "assets": {"reference": "ghcr.io/nicodes/cazper-assets:<revision>", "image_id": "sha256:<image ID>"}
   },
   "capture": {
     "snapshot_id": "<pg_export_snapshot result>",
@@ -83,9 +84,9 @@ The manifest has exactly these fields:
 The example is a schema illustration, not a runnable manifest. Supported projects
 are Cazper, Ormos and Komizo; role names must equal the project or use its prefix.
 Include source owner roles referenced by default-privilege ACLs, as well as the
-application login roles. API, worker and frontend are independent authenticated
-artifacts, each bound to the same project/revision; a worker cannot alias the API
-or be inferred from it. The engine must use a digest-pinned official
+application login roles. API, worker, frontend and the retained content-hashed
+asset set are independent authenticated artifacts, each bound to the same
+project/revision; none can alias or be inferred from another. The engine must use a digest-pinned official
 PostgreSQL reference. Current live controls use PostgreSQL 18.6.
 
 ## Distinct verification stages

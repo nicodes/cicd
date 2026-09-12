@@ -37,7 +37,7 @@ def payload(root, dump=b'PGDMPfixture', engine_id='sha256:'+'b'*64):
         'engine': {'reference': ENGINE, 'image_id': engine_id, 'major': 18},
         'roles': ['cazper_owner', 'cazper_runtime'],
         'images': {name: {'reference': f'ghcr.io/nicodes/cazper-{name}:{REVISION}', 'image_id': 'sha256:'+identity*64}
-                   for name, identity in [('api', 'c'), ('worker', 'd'), ('gate', 'e')]},
+                   for name, identity in [('api', 'c'), ('worker', 'd'), ('gate', 'e'), ('assets', 'f')]},
         # The parser validates this declaration; only a product capture test
         # can establish that its producer actually held the stated snapshot.
         'capture': {'snapshot_id': '00000003-0000001A-1', 'reclamation_fenced': True, 'completed_at': '2026-09-09T12:00:00+00:00'},
@@ -108,6 +108,7 @@ class PostgreSQLArchiveBoundaries(unittest.TestCase):
                 lambda m: m['images']['api'].update(reference='ghcr.io/attacker/cazper-api:'+REVISION),
                 lambda m: m['images']['worker'].update(reference='ghcr.io/nicodes/cazper-api:'+REVISION),
                 lambda m: m['images'].pop('worker'),
+                lambda m: m['images'].pop('assets'),
                 lambda m: m['images'].update(extra={'reference': 'ghcr.io/nicodes/cazper-extra:'+REVISION,
                                                      'image_id': 'sha256:'+'c'*64}),
                 lambda m: m.update(roles=['restore_owner']),

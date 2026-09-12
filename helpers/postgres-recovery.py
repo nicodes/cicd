@@ -78,8 +78,8 @@ def validate_manifest(value, expected_project=None, expected_revision=None):
             for role in roles) or len(set(roles)) != len(roles):
         raise ValueError('invalid PostgreSQL application roles')
     images = value['images']
-    if not isinstance(images, dict) or set(images) != {'api', 'worker', 'gate'}:
-        raise ValueError('PostgreSQL recovery requires independent API, worker and frontend image identities')
+    if not isinstance(images, dict) or set(images) != {'api', 'worker', 'gate', 'assets'}:
+        raise ValueError('PostgreSQL recovery requires independent API, worker, frontend and retained-asset image identities')
     for component, image in images.items():
         if not isinstance(image, dict) or set(image) != {'reference', 'image_id'} or image['reference'] != f'ghcr.io/nicodes/{project}-{component}:{revision}':
             raise ValueError('application image is not bound to the recovery project/revision')
