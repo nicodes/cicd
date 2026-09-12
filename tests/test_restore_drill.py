@@ -25,7 +25,7 @@ class RestoreBoundaries(unittest.TestCase):
             finally:
                 closed.append(True)
         postgres = SimpleNamespace(validate_manifest=lambda value, *_: value,
-                                   application_images=lambda *_: {'api': 'api-id', 'gate': 'gate-id'},
+                                   application_images=lambda *_: {'api': 'api-id', 'worker': 'worker-id', 'gate': 'gate-id'},
                                    restored_database=database)
         with patch.object(drill, 'helper', lambda name: {'snapshot': snapshot, 'receive-backup': receiver, 'postgres-recovery': postgres}[name]):
             with self.assertRaisesRegex(ValueError, 'callback'):
@@ -37,6 +37,7 @@ class RestoreBoundaries(unittest.TestCase):
             checks = {key: 'passed' for key in ['api_boot', 'worker_boot', 'frontend_artifact', 'application_checks', 'application_cleanup']}
             result = drill.drill('cazper', Path('/unused'), Path('/unused'), application_check=lambda *_: checks)
             self.assertEqual(result['database_restore'], 'passed')
+            self.assertEqual(result['images']['worker'], 'worker-id')
             self.assertEqual(result['cleanup'], 'passed')
             self.assertEqual(closed, [True, True])
 

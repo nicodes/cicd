@@ -36,8 +36,8 @@ def payload(root, dump=b'PGDMPfixture', engine_id='sha256:'+'b'*64):
         'format': pg.FORMAT, 'project': 'cazper', 'revision': REVISION, 'database': 'cazper',
         'engine': {'reference': ENGINE, 'image_id': engine_id, 'major': 18},
         'roles': ['cazper_owner', 'cazper_runtime'],
-        'images': {name: {'reference': f'ghcr.io/nicodes/cazper-{name}:{REVISION}', 'image_id': 'sha256:'+'c'*64}
-                   for name in ['api', 'gate']},
+        'images': {name: {'reference': f'ghcr.io/nicodes/cazper-{name}:{REVISION}', 'image_id': 'sha256:'+identity*64}
+                   for name, identity in [('api', 'c'), ('worker', 'd'), ('gate', 'e')]},
         # The parser validates this declaration; only a product capture test
         # can establish that its producer actually held the stated snapshot.
         'capture': {'snapshot_id': '00000003-0000001A-1', 'reclamation_fenced': True, 'completed_at': '2026-09-09T12:00:00+00:00'},
@@ -106,6 +106,10 @@ class PostgreSQLArchiveBoundaries(unittest.TestCase):
                 lambda m: m['engine'].update(major=True),
                 lambda m: m['capture'].update(reclamation_fenced=1),
                 lambda m: m['images']['api'].update(reference='ghcr.io/attacker/cazper-api:'+REVISION),
+                lambda m: m['images']['worker'].update(reference='ghcr.io/nicodes/cazper-api:'+REVISION),
+                lambda m: m['images'].pop('worker'),
+                lambda m: m['images'].update(extra={'reference': 'ghcr.io/nicodes/cazper-extra:'+REVISION,
+                                                     'image_id': 'sha256:'+'c'*64}),
                 lambda m: m.update(roles=['restore_owner']),
                 lambda m: m['files'].update({'../escape': {'size': 0, 'sha256': 'a'*64}}),
             ]:
@@ -128,6 +132,27 @@ class PostgreSQLArchiveBoundaries(unittest.TestCase):
             with patch.object(pg.subprocess, 'run', side_effect=subprocess.TimeoutExpired(['private-password'], 1)):
                 with self.assertRaises(RuntimeError) as raised: pg.docker('exec', 'private-password')
                 self.assertNotIn('private-password', str(raised.exception))
+
+    def test_worker_image_is_independently_authenticated_before_application_restore(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = payload(Path(directory)/'payload')
+            calls = []
+            def docker(*args, **kwargs):
+                calls.append(args)
+                recorded = next(image for image in manifest['images'].values() if image['reference'] == args[-1])
+                return json.dumps([{'Id': recorded['image_id']}])
+            with patch.object(pg, 'docker', docker):
+                images = pg.application_images(manifest, pull=True)
+            self.assertEqual(images, {name: value['image_id'] for name, value in manifest['images'].items()})
+            self.assertEqual(calls, [operation for value in manifest['images'].values() for operation in
+                                     [('pull', '--quiet', value['reference']), ('image', 'inspect', value['reference'])]])
+            def changed_worker(*args, **kwargs):
+                recorded = next(image for image in manifest['images'].values() if image['reference'] == args[-1])
+                image_id = 'sha256:'+'f'*64 if args[-1] == manifest['images']['worker']['reference'] else recorded['image_id']
+                return json.dumps([{'Id': image_id}])
+            with patch.object(pg, 'docker', changed_worker):
+                with self.assertRaisesRegex(ValueError, 'differs'):
+                    pg.application_images(manifest)
 
     def test_authenticated_backend_cannot_be_downgraded_in_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
