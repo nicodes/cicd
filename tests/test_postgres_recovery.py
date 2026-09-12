@@ -99,6 +99,7 @@ class PostgreSQLArchiveBoundaries(unittest.TestCase):
             with_owner_role['roles'].append('cazper')
             pg.validate_manifest(with_owner_role)
             for mutate in [
+                lambda m: m.update(format='nicodes-postgresql-logical-v1'),
                 lambda m: m.update(project='another-product'),
                 lambda m: m.update(project=[]),
                 lambda m: m['engine'].update(reference='postgres:latest'),
