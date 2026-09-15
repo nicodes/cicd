@@ -4,6 +4,11 @@ Portable checks used by the six Nicodes products. Product repositories keep
 their Make targets, release images, public origins, secrets, database handling,
 and deployment order explicit. Helpers neither publish nor deploy implicitly.
 
+The experimental PostgreSQL/vendor recovery additions from the uninterrupted
+rollout attempt were abandoned and removed. The established authenticated
+SQLite snapshot, restore-drill, release, and dependency controls below remain
+the supported shared helpers.
+
 `make install` installs exact tools; `make check` exercises security repair,
 export failure, and checkout process ownership boundaries and validates syntax.
 
