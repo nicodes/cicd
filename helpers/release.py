@@ -20,7 +20,7 @@ def references(project, revision, components):
         raise ValueError('release revision must be a full commit')
     if not components or len(set(components)) != len(components):
         raise ValueError('a release needs distinct image components')
-    if not set(components) <= {'api', 'worker', 'assets', 'db', 'pb', 'service', 'gate', 'config', 'maintenance'}:
+    if not set(components) <= {'api', 'db', 'pb', 'service', 'gate', 'config', 'maintenance'}:
         raise ValueError('unknown image component')
     owner = {'gdam': 'aviorstudio', 'termcade': 'aviorstudio', 'astry': 'astrylogical'}.get(project, 'nicodes')
     return [f'ghcr.io/{owner}/{project}-{component}:{revision}' for component in components]

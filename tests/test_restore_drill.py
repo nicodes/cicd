@@ -1,5 +1,4 @@
 import importlib.util
-from contextlib import contextmanager
 import json
 from pathlib import Path
 import subprocess
@@ -13,35 +12,6 @@ spec.loader.exec_module(drill)
 
 
 class RestoreBoundaries(unittest.TestCase):
-    def test_postgres_requires_explicit_complete_product_verification(self):
-        evidence = {'backend': 'postgresql', 'postgresql': {'revision': 'a'*40}, 'archive_sha256': 'b'*64}
-        snapshot = SimpleNamespace(unseal=lambda *_: evidence)
-        receiver = SimpleNamespace(receive=lambda *_: None)
-        closed = []
-        @contextmanager
-        def database(*args, **kwargs):
-            try:
-                yield {'engine': 'sha256:'+'c'*64}
-            finally:
-                closed.append(True)
-        postgres = SimpleNamespace(validate_manifest=lambda value, *_: value,
-                                   application_images=lambda *_: {'api': 'api-id', 'worker': 'worker-id', 'gate': 'gate-id', 'assets': 'assets-id'},
-                                   restored_database=database)
-        with patch.object(drill, 'helper', lambda name: {'snapshot': snapshot, 'receive-backup': receiver, 'postgres-recovery': postgres}[name]):
-            with self.assertRaisesRegex(ValueError, 'callback'):
-                drill.drill('cazper', Path('/unused'), Path('/unused'))
-            self.assertEqual(closed, [])
-            with self.assertRaisesRegex(ValueError, 'incomplete'):
-                drill.drill('cazper', Path('/unused'), Path('/unused'), application_check=lambda *_: {'api_boot': 'passed'})
-            self.assertEqual(closed, [True])
-            checks = {key: 'passed' for key in ['api_boot', 'worker_boot', 'frontend_artifact', 'application_checks', 'application_cleanup']}
-            result = drill.drill('cazper', Path('/unused'), Path('/unused'), application_check=lambda *_: checks)
-            self.assertEqual(result['database_restore'], 'passed')
-            self.assertEqual(result['images']['worker'], 'worker-id')
-            self.assertEqual(result['images']['assets'], 'assets-id')
-            self.assertEqual(result['cleanup'], 'passed')
-            self.assertEqual(closed, [True, True])
-
     def test_registry_pull_requires_authenticated_product_and_image_identity(self):
         evidence = {'image_reference': 'ghcr.io/nicodes/wrong-db:'+'a'*40, 'image_id': 'sha256:'+'b'*64}
         snapshot = SimpleNamespace(unseal=lambda *_: evidence)

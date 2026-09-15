@@ -4,6 +4,11 @@ Portable checks used by the six Nicodes products. Product repositories keep
 their Make targets, release images, public origins, secrets, database handling,
 and deployment order explicit. Helpers neither publish nor deploy implicitly.
 
+The experimental PostgreSQL/vendor recovery additions from the uninterrupted
+rollout attempt were abandoned and removed. The established authenticated
+SQLite snapshot, restore-drill, release, and dependency controls below remain
+the supported shared helpers.
+
 `make install` installs exact tools; `make check` exercises security repair,
 export failure, and checkout process ownership boundaries and validates syntax.
 
@@ -11,22 +16,6 @@ Products vendor `helpers/` and `tests/` beneath `scripts/engineering/`, with a
 `SOURCE.json` containing this repository's full commit SHA and every copied
 file's SHA256. Update the complete snapshot together and run the product's full
 `make check`. No runtime network fetch of helper code is needed.
-
-For an existing pinned product snapshot, use the reviewed local source checkout:
-
-```sh
-python3 helpers/vendor-snapshot.py --repository /path/to/cicd \
-  --revision FULL_REVIEWED_COMMIT_SHA \
-  --destination /path/to/product/scripts/engineering
-```
-
-This reads the complete committed Git tree, not uncommitted helper changes. It
-refuses modified contents, unlisted files and symlinks in the destination, and
-regenerates the full hash inventory. It neither fetches nor establishes that a
-commit has been reviewed: the operator supplies that decision. Do not edit the
-destination concurrently. If interrupted between directory renames, the previous
-snapshot remains in a sibling `.engineering-update-*/previous` directory. Run
-the product's full gate afterward; updating the pin is not compatibility proof.
 
 - `dev.py`: live supervisor and authenticated local stop socket; no port-based
   killing and no persisted PID used as shutdown authority.
@@ -69,12 +58,6 @@ the public certificate. The restore preflight requires 768 MiB available memory;
 the current 1 GB production hosts do not meet it alongside their live services.
 `test-restore-drill.py` exercises the same command with disposable local data and
 keys. Production data or credentials are not needed for the fixture.
-
-[PostgreSQL logical recovery](docs/postgresql-recovery.md) adds explicit manifest,
-archive and isolated database-restore stages without weakening the PocketBase
-default. Product code owns consistent database/file capture and application
-verification. A parsed or decrypted archive is not reported as a restored
-application. `make check` now also requires local Docker for the pinned PG control.
 
 `scan-image.py` scans actual runtime Go binaries; `scan-deployed.py` covers both
 the latest deployment attempt and the last successful revision. Caddy is built
