@@ -7,7 +7,6 @@ import hashlib
 import gzip
 import fcntl
 import ipaddress
-import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -31,17 +30,8 @@ def sha256(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def postgres_helper():
-    spec = importlib.util.spec_from_file_location('postgres_recovery', Path(__file__).with_name('postgres-recovery.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def restore(archive, target, expected=None, backend='pocketbase'):
+def restore(archive, target, expected=None):
     """Extract regular files only, bounding expansion and rejecting all links."""
-    if backend not in {'pocketbase', 'postgresql'}:
-        raise ValueError('unsupported recovery backend')
     if archive.is_symlink() or not archive.is_file():
         raise ValueError('snapshot must be a regular archive')
     archive_hash = sha256(archive)
@@ -84,11 +74,6 @@ def restore(archive, target, expected=None, backend='pocketbase'):
             if destination.stat().st_size != member.size:
                 raise ValueError('archive member was truncated')
             files[member.name] = sha256(destination)
-    if backend == 'postgresql':
-        manifest = postgres_helper().validate_payload(target, files)
-        return {'archive_sha256': archive_hash, 'expanded_bytes': expanded,
-                'files': files, 'backend': backend, 'postgresql': manifest,
-                'archive_validation': 'passed', 'database_restore': 'not_run', 'application_restore': 'not_run'}
     if 'data.db' not in files:
         raise ValueError('snapshot is missing PocketBase data.db')
     databases = {}
@@ -251,9 +236,6 @@ def seal(directory, recipient):
     """Encrypt the verified snapshot to a public recovery certificate."""
     archive = directory / 'data.tar.gz'
     evidence = json.loads((directory / 'verification.json').read_text())
-    backend = evidence.get('backend', 'pocketbase')
-    if backend not in {'pocketbase', 'postgresql'}:
-        raise ValueError('unsupported recovery backend')
     if sha256(archive) != evidence['archive_sha256']:
         raise ValueError('snapshot changed after verification')
     output = directory / 'offhost'
@@ -271,7 +253,6 @@ def seal(directory, recipient):
         subprocess.run(['openssl', 'cms', '-encrypt', '-aes-256-gcm', '-binary', '-outform', 'DER',
                         '-in', str(envelope), '-out', str(ciphertext), str(recipient)], check=True, timeout=600)
     receipt = {key: evidence[key] for key in ['archive_sha256', 'image_id', 'image_reference', 'verified_at']}
-    receipt['backend'] = backend
     receipt['format'] = 1
     receipt['ciphertext_sha256'] = sha256(ciphertext)
     (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -306,13 +287,7 @@ def unseal(directory, key, target):
         for key in ['archive_sha256', 'image_id', 'image_reference', 'verified_at']:
             if evidence[key] != receipt[key]:
                 raise ValueError('recovery metadata does not match authenticated envelope')
-        backend = evidence.get('backend', 'pocketbase')
-        if receipt.get('backend', 'pocketbase') != backend:
-            raise ValueError('recovery backend does not match authenticated envelope')
-        result = restore(Path(temporary) / 'data.tar.gz', target, evidence['archive_sha256'], backend=backend)
-        if backend == 'postgresql' and (result['postgresql']['engine']['image_id'] != evidence['image_id'] or
-                                       result['postgresql']['engine']['reference'] != evidence['image_reference']):
-            raise ValueError('PostgreSQL engine differs from authenticated recovery metadata')
+        result = restore(Path(temporary) / 'data.tar.gz', target, evidence['archive_sha256'])
         result.update({key: evidence[key] for key in ['image_id', 'image_reference', 'verified_at']})
         return result
 
@@ -329,7 +304,6 @@ def main():
     verify = commands.add_parser('verify')
     verify.add_argument('archive', type=Path)
     verify.add_argument('--sha256', required=True)
-    verify.add_argument('--backend', choices=['pocketbase', 'postgresql'], default='pocketbase')
     encrypt = commands.add_parser('seal')
     encrypt.add_argument('directory', type=Path)
     encrypt.add_argument('--recipient', type=Path, required=True)
@@ -354,7 +328,7 @@ def main():
         print(json.dumps(unseal(args.directory, args.key, args.target), indent=2))
     else:
         with tempfile.TemporaryDirectory(prefix='snapshot-verify-') as temporary:
-            print(json.dumps(restore(args.archive, Path(temporary), args.sha256, backend=args.backend), indent=2))
+            print(json.dumps(restore(args.archive, Path(temporary), args.sha256), indent=2))
 
 
 if __name__ == '__main__':

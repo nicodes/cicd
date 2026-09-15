@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-.PHONY: help install test test-postgres check
+.PHONY: help install test check
 help:
 	@echo 'make install  Install the pinned helper toolchain'
 	@echo 'make check    Test helper boundaries and validate workflow and JavaScript syntax'
@@ -10,9 +10,7 @@ install:
 test:
 	python3 -m unittest discover -s tests -v
 	python3 -m unittest discover -s template-tests -v
-test-postgres:
-	CICD_TEST_POSTGRES=1 python3 -m unittest discover -s tests -p 'test_postgres_recovery.py' -v
-check: test test-postgres
+check: test
 	python3 helpers/test-caddy.py
 	@for file in helpers/*.mjs helpers/*.cjs; do node --check "$$file"; done
 	actionlint
