@@ -256,6 +256,53 @@ class PostgreSQLArchiveBoundaries(unittest.TestCase):
                 pg.validate_manifest(release)
 
 
+    def test_service_named_api_side_binds_and_anchors_like_api(self):
+        # Projects may deploy the API side under a service-named image; the
+        # binding, anchoring and mixed-recording rules match api exactly.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); source = root/'payload'; manifest = payload(source)
+            manifest['images'] = {
+                'service': {'reference': f'ghcr.io/nicodes/cazper-service:{REVISION}', 'image_id': 'sha256:'+'c'*64},
+                'gate': {'reference': 'ghcr.io/nicodes/cazper-gate:' + 'f'*40, 'image_id': 'sha256:'+'c'*64},
+            }
+            (source/pg.MANIFEST).write_text(json.dumps(manifest))
+            pg.validate_manifest(manifest)
+            pg.validate_payload(source)
+            drifting = copy.deepcopy(manifest)
+            drifting['images']['service']['reference'] = 'ghcr.io/nicodes/cazper-service:' + 'd'*40
+            with self.assertRaisesRegex(ValueError, 'not bound to the recovery project/revision'):
+                pg.validate_manifest(drifting)
+
+    def test_service_binding_stays_strict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = payload(Path(directory)/'payload')
+            manifest['images'] = {
+                'service': {'reference': f'ghcr.io/nicodes/cazper-service:{REVISION}', 'image_id': 'sha256:'+'c'*64},
+                'gate': {'reference': f'ghcr.io/nicodes/cazper-gate:{REVISION}', 'image_id': 'sha256:'+'c'*64},
+            }
+            for mutate in [
+                lambda m: m['images'].update(api=dict(m['images']['service'])),
+                lambda m: m['images'].update(worker=dict(m['images']['service'])),
+                lambda m: m['images']['service'].update(reference='ghcr.io/attacker/cazper-service:'+REVISION),
+                lambda m: m['images']['service'].update(reference='ghcr.io/nicodes/cazper-api:'+REVISION),
+            ]:
+                value = copy.deepcopy(manifest); mutate(value)
+                with self.assertRaises(ValueError): pg.validate_manifest(value)
+
+    def test_host_local_service_tag_anchors_the_recorded_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.host_local_manifest(Path(directory)/'payload')
+            manifest['images'] = {
+                'service': {'reference': 'ghcr.io/nicodes/cazper-service:inapi-fold', 'image_id': 'sha256:'+'c'*64},
+                'gate': manifest['images']['gate'],
+            }
+            pg.validate_manifest(manifest)
+            pg.validate_manifest(manifest, 'cazper', 'host-local:inapi-fold')
+            drifting = copy.deepcopy(manifest)
+            drifting['images']['service']['reference'] = 'ghcr.io/nicodes/cazper-service:other-fold'
+            with self.assertRaisesRegex(ValueError, 'not bound to the recovery project/revision'):
+                pg.validate_manifest(drifting)
+
 @unittest.skipUnless(os.environ.get('CICD_TEST_POSTGRES') == '1', 'make check requires the real isolated PostgreSQL control')
 class PostgreSQLRestoreIntegration(unittest.TestCase):
     def test_real_custom_dump_restores_rows_and_acl_and_cleans_up(self):

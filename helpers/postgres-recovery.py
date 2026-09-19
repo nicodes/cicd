@@ -92,13 +92,17 @@ def validate_manifest(value, expected_project=None, expected_revision=None):
             for role in roles) or len(set(roles)) != len(roles):
         raise ValueError('invalid PostgreSQL application roles')
     images = value['images']
-    if not isinstance(images, dict) or set(images) != {'api', 'gate'}:
+    # The API-side component deploys as `api` or `service` depending on the
+    # project's release-pipeline naming; both spellings bind and anchor
+    # identically, and the gate is always required beside exactly one of them.
+    if not isinstance(images, dict) or set(images) not in ({'api', 'gate'}, {'service', 'gate'}):
         raise ValueError('PostgreSQL recovery requires API and frontend image identities')
-    # The api tag always anchors the manifest revision: equal to it for a
-    # release (40-hex) revision, or to the recorded tag in host-local mode.
-    # Hex+shared remains strict equality; otherwise each component binds its
-    # own recorded tag, keeping mixed rollouts and the host-local release-tag
-    # transition truthful. The sha256 image_id stays the pinned identity.
+    # The API-side component's tag always anchors the manifest revision: equal
+    # to it for a release (40-hex) revision, or to the recorded tag in
+    # host-local mode. Hex+shared remains strict equality; otherwise each
+    # component binds its own recorded tag, keeping mixed rollouts and the
+    # host-local release-tag transition truthful. The sha256 image_id stays
+    # the pinned identity.
     anchor = revision if host_local is None else host_local[1]
     tag_pattern = DOCKER_TAG if host_local is not None else HEX_REVISION
     for component, image in images.items():
@@ -107,7 +111,7 @@ def validate_manifest(value, expected_project=None, expected_revision=None):
                 or not isinstance(image.get('reference'), str) or not image['reference'].startswith(prefix)):
             raise ValueError('application image is not bound to the recovery project/revision')
         tag = image['reference'][len(prefix):]
-        if not tag_pattern.fullmatch(tag) or (component == 'api' and tag != anchor):
+        if not tag_pattern.fullmatch(tag) or (component != 'gate' and tag != anchor):
             raise ValueError('application image is not bound to the recovery project/revision')
         if not isinstance(image['image_id'], str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', image['image_id']):
             raise ValueError('invalid application image identity')

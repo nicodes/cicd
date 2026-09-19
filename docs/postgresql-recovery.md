@@ -88,10 +88,14 @@ are Cazper, Ormos, Komizo, Termcade, Astry, Fields of Revik and GDAM; role names
 Include source owner roles referenced by default-privilege ACLs, as well as the
 application login roles. Each image reference is bound to the project owner's
 registry namespace and component, with the sha256 image ID as the pinned
-identity. For a release revision every component tag is 40-hex and the api tag
-equals the revision; the gate may roll on a different 40-hex tag. During the
-host-local release-tag transition the revision is recorded truthfully as
-`host-local:<api tag>` and each component binds its own recorded docker tag.
+identity. For a release revision every component tag is 40-hex and the API-side
+tag equals the revision; the gate may roll on a different 40-hex tag. The API-side
+component is recorded under the project's release-pipeline name, `api` or
+`service`; both spellings bind to their own component prefix and anchor the
+revision identically, and the gate is always required beside exactly one of
+them. During the host-local release-tag transition the revision is recorded
+truthfully as `host-local:<API-side tag>` and each component binds its own
+recorded docker tag.
 The engine must use a digest-pinned official PostgreSQL reference. Current live
 controls use PostgreSQL 18.6.
 
