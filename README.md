@@ -241,3 +241,69 @@ trusted-base checkout or exact-head merge gate: `cazper-web`, `ctcalc-web`,
 `komizo-actions-127`, `termcade`, `termcade-web` and `termcade-games`.
 `aviorstudio/castledrop`, `aviorstudio/fieldsofrevik` and `aviorstudio/prizm`
 inline a direct `gh pr merge --squash` dependabot job in their `ci.yml`.
+<!-- ws1: reusable-backup begin -->
+
+## Reusable backup workflow
+
+`.github/workflows/backup.yml` is the single source of truth for the nightly
+encrypted-backup run. Product repositories replace their whole local
+`.github/workflows/backup.yml` with a thin caller that keeps only the schedule,
+the main-branch guard and the call itself:
+
+```yaml
+name: Backup
+"on":
+  schedule:
+    - cron: 43 8 * * *   # keep each product's existing minute spread
+  workflow_dispatch: null
+permissions:
+  contents: read
+jobs:
+  backup:
+    name: Backup
+    if: "github.ref == 'refs/heads/main'"
+    uses: nicodes/cicd/.github/workflows/backup.yml@<full cicd commit SHA>
+    with:
+      product: komizo                  # slug naming the backup objects
+      server: "${{ vars.SERVER_HOST }}" # or vars.KOMIZO_SERVER_URL
+      user: komizo-cazper              # SSH deploy user
+    secrets: inherit
+```
+
+The caller must keep its `production` environment, its own
+`scripts/export-backup.sh` host-side exporter, and provide (with
+`secrets: inherit`) the `KOMIZO_DEPLOY_KEY` secret, the `KOMIZO_KNOWN_HOSTS`,
+`BACKUP_S3_HOSTNAME` and `BACKUP_S3_BUCKET` variables, and the
+`BACKUP_S3_ACCESS_KEY` and `BACKUP_S3_SECRET_KEY` secrets. Vars and secrets
+resolve in the caller's repository context. The reusable workflow checks the
+caller out, connects through `komizo-actions/connect`, runs the exporter,
+derives `taken_at` from the receipt's `verified_at`, PUTs the sealed pair with
+the pinned cicd `helpers/upload-backup.py`, uploads the artifact for 30 days,
+and reports failures through the pinned cicd `helpers/report-failure.py`. The
+cicd helper source is itself checked out at a pinned full commit SHA, so no
+runtime fetch of a moving ref is involved.
+
+What the thin caller replaces, in full:
+
+| Repository | Replaced by this call |
+| --- | --- |
+| nicodes/komizo-be `.github/workflows/backup.yml` | whole local Backup workflow |
+| nicodes/cazper-be `.github/workflows/backup.yml` | whole local Backup workflow |
+| aviorstudio/termcade-be `.github/workflows/backup.yml` | whole local Backup workflow |
+| aviorstudio/gdam-be `.github/workflows/backup.yml` | whole local Backup workflow |
+
+Re-land decision record, 2026-09-18: `helpers/upload-backup.py` and
+`helpers/vendor-snapshot.py` are restored byte-identical from the reviewed
+2057d819 snapshot. `upload-backup.py` never reached main (it lived on the
+d5ef973 lineage); `vendor-snapshot.py` was dropped by revert 74f7c34. All four
+product repositories vendor both files byte-identically
+(`sha256 db56696bf8906daa3469e82c0be30b3ca50dff4057634ecfdc6e6ae32377e18a` and
+`fcecb4b627cbbf8e91c3e48fa02e0b8e3329fde10e916a5a2e5d6c68cada1027`), so
+re-vendoring from main would silently drop them and break each product's
+`scripts/upload-backup.sh` at runtime. This record supersedes the earlier
+"abandoned and removed" paragraph for these two helpers; their restored tests
+run in `make check`. The four product `scripts/upload-backup.sh` wrappers are
+byte-identical modulo the slug and the vendored helper path, so the reusable
+workflow invokes the re-landed helper directly instead of the wrapper.
+
+<!-- ws1: reusable-backup end -->
