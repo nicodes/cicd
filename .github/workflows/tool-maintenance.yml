@@ -1,17 +1,19 @@
-name: Tool watch
+name: Tool maintenance
 on:
-  workflow_call:
+  schedule:
+    - cron: '31 9 * * 1'
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: tool-maintenance
+  cancel-in-progress: false
 jobs:
   watch:
-    name: Tool watch
+    name: Watch tools and Caddy dependencies
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    concurrency:
-      group: tool-watch
-      cancel-in-progress: false
+    timeout-minutes: 45
     permissions:
       contents: read
       issues: write
@@ -20,21 +22,18 @@ jobs:
         with:
           persist-credentials: false
         timeout-minutes: 3
-      - name: Check out the shared report helper
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: nicodes/cicd
-          ref: a170e0fde8a98744e9737847a653df926242a3c9
-          path: .cicd
-          persist-credentials: false
-          sparse-checkout: helpers/
-        timeout-minutes: 3
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         timeout-minutes: 15
-      - run: python3 scripts/engineering/helpers/watch-tools.py
+      - run: python3 helpers/watch-tools.py
         env:
           GH_TOKEN: ${{ github.token }}
-        timeout-minutes: 12
+        timeout-minutes: 15
+      - name: Report a failed maintenance check
+        if: failure()
+        run: python3 helpers/report-failure.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+        timeout-minutes: 3
       - name: Retain the complete update inventory
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -44,8 +43,3 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
         timeout-minutes: 5
-      - if: failure()
-        run: python3 .cicd/helpers/report-failure.py
-        env:
-          GH_TOKEN: ${{ github.token }}
-        timeout-minutes: 3
