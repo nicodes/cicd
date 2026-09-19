@@ -70,6 +70,88 @@ old/new read-write compatibility proof required by the product policy.
 and ignore-file envelope. Product scripts keep runtime and deployment behavior
 explicit; template regression tests exercise complete gates and failure propagation.
 
+<!-- ws2/reusable-vuln-tools: begin -->
+## Shared reusable workflows: vulnerability scan and tool watch
+
+`nicodes/cicd` is the single source of truth for the vulnerability-scan and
+tool-watch workflow bodies that the product repositories used to carry as
+near-identical copies. Product repositories keep thin callers that own only
+their schedule and their project identity; the shared bodies live here.
+
+### Caller contract: vulnerability scan (`vuln.yml`)
+
+The caller keeps `on: schedule` with its own staggered cron minute plus
+`workflow_dispatch`, and grants the workflow at least
+`contents: read`, `packages: read`, `deployments: read`, `issues: write`
+(a called workflow can only restrict, never elevate, permissions). The body —
+checkout, mise, ghcr.io login, source scan, deployed-image scan and failure
+reporting — comes from this repository:
+
+```yaml
+jobs:
+  scan:
+    uses: nicodes/cicd/.github/workflows/vuln.yml@<full-40-hex-cicd-commit>
+    with:
+      project: cazper
+      source-scan-command: bun install --cwd app --frozen-lockfile && make vuln
+```
+
+`project` is required and is passed to the caller's own vendored
+`scripts/engineering/helpers/scan-deployed.py`; that path stays the contract.
+`source-scan-command` is the one optional knob: it runs in the caller's
+checkout with the caller's mise toolchain active, and an empty value (the
+default) skips the source-scan step. Failure reporting runs cicd's own
+`helpers/report-failure.py` (checked out from the pinned cicd revision inside
+the reusable workflow), so these two workflows no longer depend on the
+caller's vendored `report-failure.py`; other workflows keep using it.
+
+### Caller contract: tool watch (`tools.yml`)
+
+The caller keeps `on: schedule` (weekly, own staggered minute) plus
+`workflow_dispatch`, grants `contents: read` and `issues: write`, and calls:
+
+```yaml
+jobs:
+  watch:
+    uses: nicodes/cicd/.github/workflows/tools.yml@<full-40-hex-cicd-commit>
+```
+
+There are no inputs. The reusable job keeps the fleet's `main`-only guard
+(`if: github.ref == 'refs/heads/main'`, evaluated in the caller's context),
+the `tool-watch` concurrency group with `cancel-in-progress: false`, and the
+`tool-updates` artifact (`.artifacts/tool-updates.json`, 30-day retention,
+`if-no-files-found: ignore`, uploaded `if: always()`). It runs the caller's
+vendored `scripts/engineering/helpers/watch-tools.py` with the caller's token.
+
+### What this repository changed
+
+- Added reusable `.github/workflows/vuln.yml` and `.github/workflows/tools.yml`.
+- Internalized the `docker/login-action` pin the fleet duplicated.
+- Renamed this repository's own scheduled maintenance workflow from
+  `tools.yml` to `tool-maintenance.yml` (cron `31 9 * * 1`, `helpers/watch-tools.py`
+  body and permissions unchanged) to free the name for the reusable workflow.
+
+### Fleet divergence at adoption time
+
+| Repository | vuln cron | `project` | Source scan | vuln shape replaced | tools copy |
+|---|---|---|---|---|---|
+| nicodes/cazper-be | `39 6 * * *` | `cazper` | `bun install --cwd app --frozen-lockfile && make vuln` | full copy, separate report job, 110 min | identical fleet copy |
+| nicodes/ormos-be | `29 6 * * *` | `ormos` | `bun install --cwd app --frozen-lockfile && make vuln` | full copy, separate report job, 110 min | identical fleet copy |
+| aviorstudio/termcade-be | `39 6 * * *` | `termcade` | `make vuln` | compact single-job copy, 90 min | identical fleet copy |
+| aviorstudio/gdam-be | `39 6 * * *` | `gdam` | `make vuln` | compact single-job copy, 90 min | identical fleet copy |
+| astrylogical/astry-be | `39 6 * * *` | `astry` | `make vuln` | compact single-job copy, 90 min | identical fleet copy |
+| nicodes/komizo-be | `19 6 * * *` (daily) | `komizo` | guarded two-stage scan | none — bespoke drill/vuln-issue.sh report copy stays local | identical fleet copy |
+
+All six `tools.yml` copies were byte-identical (weekly `41 9 * * 1`, same
+steps and timeouts), so the reusable body reproduces them exactly; komizo-be's
+vulnerability workflow keeps its local drill mode, gate-status verdict logic
+and issue script and is intentionally not folded into the reusable body.
+`nicodes/tonesplit-be` and `nicodes/ctcalc-be` carry an older weekly
+`Dependency scan` without `scan-deployed.py`; their `tools.yml` copies match
+the fleet shape and can adopt the reusable tool watch, but the vulnerability
+reusable does not cover their shape.
+<!-- ws2/reusable-vuln-tools: end -->
+
 ## Bun update compatibility and issue-only decision
 
 GitHub Dependabot rejects the Bun 1.4.1 lockfile format (version 3). Use each
