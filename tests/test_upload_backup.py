@@ -1,0 +1,209 @@
+import hashlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import urllib.error
+import urllib.request
+
+spec = importlib.util.spec_from_file_location('upload_backup', Path(__file__).resolve().parents[1]/'helpers/upload-backup.py')
+uploader = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(uploader)
+
+STAMP = '20260918T080033Z'
+CONTRACT = {
+    'BACKUP_S3_ACCESS_KEY': 'test-access-key',
+    'BACKUP_S3_SECRET_KEY': 'test-secret-key',
+    'BACKUP_S3_HOSTNAME': 'objects.example.test',
+    'BACKUP_S3_BUCKET': 'backup-bucket',
+}
+
+
+class FakeResponse:
+    def __init__(self, status):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def getcode(self):
+        return self.status
+
+
+class FakeHTTP:
+    def __init__(self, statuses):
+        self.statuses = list(statuses)
+        self.calls = []
+
+    def __call__(self, request, timeout=None):
+        body = request.data or b''
+        self.calls.append({
+            'method': request.get_method(),
+            'url': request.full_url,
+            'headers': {key.lower(): value for key, value in request.header_items()},
+            'sha256': hashlib.sha256(body).hexdigest(),
+            'length': len(body),
+            'timeout': timeout,
+        })
+        status = self.statuses.pop(0)
+        if status >= 400:
+            raise urllib.error.HTTPError(request.full_url, status, 'error', hdrs={}, fp=io.BytesIO())
+        return FakeResponse(status)
+
+
+class UploadBackup(unittest.TestCase):
+    def env(self, **changes):
+        values = {key: value for key, value in os.environ.items()
+                  if key not in {*CONTRACT, 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+                                 'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'}}
+        values.update(CONTRACT)
+        for key, value in changes.items():
+            if value is None:
+                values.pop(key, None)
+            else:
+                values[key] = value
+        return patch.dict(os.environ, values, clear=True)
+
+    def pair(self, root, payload=b'encrypted', receipt=None):
+        cms = root/'snapshot.cms'
+        cms.write_bytes(payload)
+        if receipt is None:
+            receipt = {'format': 1, 'ciphertext_sha256': hashlib.sha256(payload).hexdigest(),
+                       'archive_sha256': 'a'*64, 'image_id': 'sha256:'+'b'*64}
+        path = root/'receipt.json'
+        path.write_text(json.dumps(receipt))
+        return cms, path
+
+    def test_key_naming_for_each_allowed_slug(self):
+        fake = FakeHTTP([200, 200] * len(uploader.SLUGS))
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            for slug in uploader.SLUGS:
+                result = uploader.upload(slug, cms, receipt, STAMP)
+                cms_key = f'{slug}-bk-{STAMP}.cms'
+                receipt_key = f'{slug}-bk-{STAMP}.receipt.json'
+                self.assertEqual(result, {
+                    'slug': slug, 'cms_key': cms_key, 'receipt_key': receipt_key,
+                    'hostname': 'objects.example.test',
+                })
+        self.assertEqual(len(fake.calls), 2 * len(uploader.SLUGS))
+        gdam = [call for call in fake.calls if 'gdam-bk-20260918T080033Z' in call['url']]
+        self.assertEqual([call['url'] for call in gdam], [
+            'https://objects.example.test/backup-bucket/gdam-bk-20260918T080033Z.cms',
+            'https://objects.example.test/backup-bucket/gdam-bk-20260918T080033Z.receipt.json',
+        ])
+
+    def test_path_style_url_uses_env_hostname_and_bucket(self):
+        fake = FakeHTTP([200, 200])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            uploader.upload('cazper', cms, receipt, STAMP)
+        self.assertEqual([call['method'] for call in fake.calls], ['PUT', 'PUT'])
+        for call in fake.calls:
+            self.assertTrue(call['url'].startswith('https://objects.example.test/backup-bucket/'))
+            self.assertNotIn('backup-bucket.objects.example.test', call['url'])
+            self.assertNotIn('vultrobjects', call['url'])
+            self.assertEqual(call['headers'].get('if-none-match'), '*')
+            self.assertEqual(call['headers'].get('x-amz-content-sha256'), call['sha256'])
+            self.assertIn('us-east-1/s3/aws4_request', call['headers'].get('authorization', ''))
+            self.assertIn('Credential=test-access-key/', call['headers'].get('authorization', ''))
+            self.assertNotIn('AWS_ACCESS_KEY_ID', call['headers'].get('authorization', ''))
+
+    def test_rejects_unknown_slug_bad_timestamp_missing_env_and_aws_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cms, receipt = self.pair(Path(directory))
+            with self.env(), patch.object(uploader, 'urlopen', FakeHTTP([])):
+                with self.assertRaises(ValueError):
+                    uploader.upload('unknown', cms, receipt, STAMP)
+                with self.assertRaises(ValueError):
+                    uploader.upload('gdam', cms, receipt, '2026-09-18T08:00:33Z')
+                with self.assertRaises(ValueError):
+                    uploader.upload('gdam', cms, receipt, '20261301T000000Z')
+            for name in CONTRACT:
+                with self.env(**{name: None}), patch.object(uploader, 'urlopen', FakeHTTP([])):
+                    with self.assertRaises(ValueError):
+                        uploader.upload('gdam', cms, receipt, STAMP)
+                with self.env(**{name: ''}), patch.object(uploader, 'urlopen', FakeHTTP([])):
+                    with self.assertRaises(ValueError):
+                        uploader.upload('gdam', cms, receipt, STAMP)
+            with self.env(AWS_ACCESS_KEY_ID='AKIA-WRONG'), patch.object(uploader, 'urlopen', FakeHTTP([])):
+                with self.assertRaises(ValueError):
+                    uploader.upload('gdam', cms, receipt, STAMP)
+            with self.env(AWS_SECRET_ACCESS_KEY='wrong-secret'), patch.object(uploader, 'urlopen', FakeHTTP([])):
+                with self.assertRaises(ValueError):
+                    uploader.upload('gdam', cms, receipt, STAMP)
+
+    def test_refused_overwrite_does_not_put_receipt(self):
+        fake = FakeHTTP([412])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            with self.assertRaises(ValueError):
+                uploader.upload('gdam', cms, receipt, STAMP)
+        self.assertEqual(len(fake.calls), 1)
+        self.assertTrue(fake.calls[0]['url'].endswith('.cms'))
+
+    def test_cms_put_failure_does_not_attempt_receipt_put(self):
+        fake = FakeHTTP([500])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            with self.assertRaises(RuntimeError):
+                uploader.upload('gdam', cms, receipt, STAMP)
+        self.assertEqual(len(fake.calls), 1)
+        self.assertTrue(fake.calls[0]['url'].endswith('.cms'))
+
+    def test_receipt_put_failure_after_cms_success_raises(self):
+        fake = FakeHTTP([200, 500])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            with self.assertRaisesRegex(RuntimeError, 'gdam-bk-20260918T080033Z.cms'):
+                uploader.upload('gdam', cms, receipt, STAMP)
+        self.assertEqual([call['url'].rsplit('/', 1)[-1] for call in fake.calls], [
+            'gdam-bk-20260918T080033Z.cms',
+            'gdam-bk-20260918T080033Z.receipt.json',
+        ])
+
+    def test_does_not_read_aws_access_key_id_as_credentials(self):
+        fake = FakeHTTP([200, 200])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            uploader.upload('ormos', cms, receipt, STAMP)
+        authorization = fake.calls[0]['headers']['authorization']
+        self.assertIn('Credential=test-access-key/', authorization)
+        source = Path(__file__).resolve().parents[1].joinpath('helpers/upload-backup.py').read_text()
+        self.assertIn('BACKUP_S3_ACCESS_KEY', source)
+        self.assertNotRegex(source, r"os\.environ\.get\('AWS_ACCESS_KEY_ID'\)")
+        self.assertEqual(uploader.CONTRACT[0], 'BACKUP_S3_ACCESS_KEY')
+
+    def test_no_boto3_import(self):
+        self.assertNotIn('boto3', sys.modules)
+        self.assertNotIn('botocore', sys.modules)
+        self.assertNotIn('boto3', Path(__file__).resolve().parents[1].joinpath('helpers/upload-backup.py').read_text())
+        self.assertNotIn('import boto', Path(__file__).resolve().parents[1].joinpath('helpers/upload-backup.py').read_text())
+
+    def test_checksum_mismatch_and_symlink_refuse_before_http(self):
+        fake = FakeHTTP([])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            root = Path(directory)
+            cms, receipt = self.pair(root, payload=b'encrypted',
+                                     receipt={'format': 1, 'ciphertext_sha256': 'c'*64})
+            with self.assertRaises(ValueError):
+                uploader.upload('gdam', cms, receipt, STAMP)
+            matching = root/'receipt-ok.json'
+            matching.write_text(json.dumps({'format': 1, 'ciphertext_sha256': hashlib.sha256(b'encrypted').hexdigest()}))
+            link = root/'link.cms'
+            link.symlink_to(cms)
+            with self.assertRaises(ValueError):
+                uploader.upload('gdam', link, matching, STAMP)
+        self.assertEqual(fake.calls, [])
+
+
+if __name__ == '__main__':
+    unittest.main()
