@@ -49,7 +49,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nicodes/cicd
-          ref: f55163d50f7e29c130bd5c68674ae36eb6ea09ea # re-landed backup helpers live at and after this commit
+          ref: 7caf5266ef342f5bceefa9a84de95f000d54dbbf # re-landed backup helpers live at and after this commit
           path: .cicd
           sparse-checkout: helpers
           persist-credentials: false
@@ -119,7 +119,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nicodes/cicd
-          ref: f55163d50f7e29c130bd5c68674ae36eb6ea09ea # re-landed backup helpers live at and after this commit
+          ref: 7caf5266ef342f5bceefa9a84de95f000d54dbbf # re-landed backup helpers live at and after this commit
           path: .cicd
           sparse-checkout: helpers
           persist-credentials: false
