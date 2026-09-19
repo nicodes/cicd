@@ -15,7 +15,8 @@ import unittest
 ROOT = Path(__file__).parents[1]
 WORKFLOWS = ROOT/'.github'/'workflows'
 HELPER_REF = 'a170e0fde8a98744e9737847a653df926242a3c9'
-SHA_PIN = re.compile(r'uses:\s*[\w.-]+/[\w.-]+@[0-9a-f]{40}\s+#\s*v?\d[\w.+-]*\s*$')
+USE_KEY = re.compile(r'(?:^|[-\s])uses:\s*(?P<value>.+?)\s*$')
+SHA_PIN = re.compile(r'^[\w.-]+(?:/[\w.-]+)+@[0-9a-f]{40}\s+#\s*v?\d[\w.+-]*$')
 
 
 def load(name):
@@ -146,10 +147,16 @@ class WorkflowPinTests(unittest.TestCase):
     def test_every_uses_reference_is_a_full_sha_with_a_version_comment(self):
         for path in sorted(WORKFLOWS.glob('*.yml')):
             with self.subTest(workflow=path.name):
-                lines = [line.strip() for line in path.read_text().splitlines() if 'uses:' in line]
-                self.assertTrue(lines, f'{path.name} has no actions to pin')
-                for line in lines:
-                    self.assertRegex(line, SHA_PIN, f'{path.name}: {line}')
+                entries = []
+                for line in path.read_text().splitlines():
+                    if line.strip().startswith('#'):
+                        continue
+                    match = USE_KEY.search(line)
+                    if match:
+                        entries.append(match.group('value').strip())
+                self.assertTrue(entries, f'{path.name} has no actions to pin')
+                for value in entries:
+                    self.assertRegex(value, SHA_PIN, f'{path.name}: uses {value}')
 
 
 class ToolMaintenanceRenameTests(unittest.TestCase):
