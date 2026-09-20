@@ -62,7 +62,11 @@ jobs:
           persist-credentials: false
         timeout-minutes: 3
       - name: Connect for the verified snapshot
-        uses: nicodes/komizo-actions/connect@3969f9541f731a50bb6efce14d318a02d6ec5c99 # v0.0.10
+        # v0.0.11 is the fleet-proven pin (every per-product backup and both
+        # green reusable callers run it); its connect/ tree is byte-identical
+        # to v0.0.10's, so this bump changes no behavior and removes the
+        # stale-pin suspect from incident matrices.
+        uses: nicodes/komizo-actions/connect@b032fc88f82233f1c060e238bc60b2888a913490 # v0.0.11
         env:
           KOMIZO_SERVER_URL: "${{ inputs.server }}"
           KOMIZO_DEPLOY_KEY: "${{ secrets.KOMIZO_DEPLOY_KEY }}"

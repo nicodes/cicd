@@ -22,6 +22,9 @@ CONTRACT = {
     'BACKUP_S3_HOSTNAME': 'objects.example.test',
     'BACKUP_S3_BUCKET': 'backup-bucket',
 }
+BLOB_NOT_FOUND = (b'<?xml version="1.0" encoding="utf-8"?><Error>'
+                  b'<Code>BlobNotFound</Code>'
+                  b'<Message>The specified blob does not exist.</Message></Error>')
 
 
 class FakeResponse:
@@ -53,9 +56,10 @@ class FakeHTTP:
             'length': len(body),
             'timeout': timeout,
         })
-        status = self.statuses.pop(0)
+        item = self.statuses.pop(0)
+        status, error_body = item if isinstance(item, tuple) else (item, b'')
         if status >= 400:
-            raise urllib.error.HTTPError(request.full_url, status, 'error', hdrs={}, fp=io.BytesIO())
+            raise urllib.error.HTTPError(request.full_url, status, 'error', hdrs={}, fp=io.BytesIO(error_body))
         return FakeResponse(status)
 
 
@@ -149,6 +153,44 @@ class UploadBackup(unittest.TestCase):
                 uploader.upload('gdam', cms, receipt, STAMP)
         self.assertEqual(len(fake.calls), 1)
         self.assertTrue(fake.calls[0]['url'].endswith('.cms'))
+
+    def test_blob_not_found_on_conditional_put_retries_unconditionally(self):
+        # Azure-fronted S3-compatible gateways answer the If-None-Match: *
+        # precondition with 404 BlobNotFound for an absent object instead of
+        # performing the write; the helper must read that as "absent" and PUT.
+        fake = FakeHTTP([(404, BLOB_NOT_FOUND), 200, (404, BLOB_NOT_FOUND), 200])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            result = uploader.upload('gdam', cms, receipt, STAMP)
+        self.assertEqual(result['cms_key'], f'gdam-bk-{STAMP}.cms')
+        self.assertEqual([call['method'] for call in fake.calls], ['PUT'] * 4)
+        for attempt, retry in ((fake.calls[0], fake.calls[1]), (fake.calls[2], fake.calls[3])):
+            self.assertEqual(attempt['headers'].get('if-none-match'), '*')
+            self.assertNotIn('if-none-match', retry['headers'])
+            self.assertEqual(attempt['url'], retry['url'])
+            self.assertEqual(attempt['sha256'], retry['sha256'])
+
+    def test_persistent_404_raises_with_the_provider_error_code(self):
+        # A genuine 404 (wrong bucket or hostname) fails the unconditional
+        # retry too, and the message must name the provider's error code.
+        fake = FakeHTTP([(404, BLOB_NOT_FOUND), (404, BLOB_NOT_FOUND)])
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(uploader, 'urlopen', fake):
+            cms, receipt = self.pair(Path(directory))
+            with self.assertRaisesRegex(RuntimeError, r'HTTP 404 \(BlobNotFound'):
+                uploader.upload('gdam', cms, receipt, STAMP)
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_missing_contract_env_names_the_variable_and_the_remedy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cms, receipt = self.pair(Path(directory))
+            for name in CONTRACT:
+                with self.env(**{name: None}), patch.object(uploader, 'urlopen', FakeHTTP([])):
+                    with self.assertRaises(ValueError) as raised:
+                        uploader.upload('gdam', cms, receipt, STAMP)
+                message = str(raised.exception)
+                self.assertIn(f'missing {name}', message)
+                self.assertIn('repo-level', message)
+                self.assertIn('caller', message.lower())
 
     def test_cms_put_failure_does_not_attempt_receipt_put(self):
         fake = FakeHTTP([500])
