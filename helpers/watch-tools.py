@@ -17,15 +17,38 @@ def updates(root, installed, outdated):
         # mise can return inherited tools even with --local. Never update them.
         if Path(item['source']['path']).resolve() != config:
             continue
-        current = installed[name]
+        entry = installed[name]
         latest = item.get('bump') or item.get('latest')
-        if not isinstance(current, str) or not re.fullmatch(r'\d+\.\d+\.\d+', current):
-            raise ValueError(f'{name}: expected an exact repository version')
-        if not isinstance(latest, str) or not re.fullmatch(r'\d+\.\d+\.\d+', latest):
-            raise ValueError(f'{name}: unrecognized upstream version')
-        if tuple(map(int, latest.split('.'))) > tuple(map(int, current.split('.'))):
+        if isinstance(entry, dict):
+            # Table form (e.g. the mise github: backend pins in aviorstudio/fieldsofrevik's
+            # .mise.toml): the pin is the entry's version field, decorated the way
+            # upstream tags it — `v0.0.8`, `cli-v0.0.5`, `4.4.1-stable`.
+            current = entry.get('version')
+            if not isinstance(current, str):
+                raise ValueError(f'{name}: expected an exact repository version')
+            current_core = decorated_version(name, current, 'repository')
+            latest_core = decorated_version(name, latest, 'upstream')
+        else:
+            current = entry
+            if not isinstance(current, str) or not re.fullmatch(r'\d+\.\d+\.\d+', current):
+                raise ValueError(f'{name}: expected an exact repository version')
+            current_core = current
+            if not isinstance(latest, str) or not re.fullmatch(r'\d+\.\d+\.\d+', latest):
+                raise ValueError(f'{name}: unrecognized upstream version')
+            latest_core = latest
+        if tuple(map(int, latest_core.split('.'))) > tuple(map(int, current_core.split('.'))):
             result.append((name, current, latest))
     return result
+
+
+def decorated_version(name, version, origin):
+    """Numeric core of a decorated table-form pin; unknown shapes fail closed."""
+    if not isinstance(version, str):
+        raise ValueError(f'{name}: unrecognized {origin} version')
+    match = re.fullmatch(r'(?:[a-z]+-)?v?(\d+)\.(\d+)\.(\d+)(?:[-+][A-Za-z0-9.+-]+)?', version)
+    if not match:
+        raise ValueError(f'{name}: unrecognized {origin} version')
+    return '.'.join(match.groups())
 
 
 def caddy_updates(root):
@@ -69,7 +92,9 @@ def main():
         ['mise', 'outdated', '--bump', '--local', '--json'], text=True, timeout=600))
     pending = updates(root, installed, outdated) + caddy_updates(root)
     repo = os.environ['GITHUB_REPOSITORY']
-    if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo):
+    # The owned issue may be filed only in the three portfolio orgs
+    # (docs/ACTIVE-PROJECTS.md) — the same boundary merge-checked.py enforces.
+    if not re.fullmatch(r'(?:nicodes|aviorstudio|astrylogical)/[a-z0-9-]+', repo):
         raise ValueError('invalid repository')
     title = 'Tool maintenance: pinned versions have updates'
     issues = json.loads(subprocess.check_output(['gh', 'issue', 'list', '--repo', repo,

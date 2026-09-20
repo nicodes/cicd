@@ -42,3 +42,42 @@ class ToolWatchTests(unittest.TestCase):
         item['latest'] = 'latest'
         with self.assertRaises(ValueError):
             watch.updates(root, {'bun': '1.2.3'}, {'bun': item})
+
+    def test_table_form_github_pins_parse_and_compare(self):
+        # aviorstudio/fieldsofrevik's .mise.toml (origin/main) pins github:-backend
+        # tools in table form, decorated the way upstream tags its releases.
+        config_toml = '''[tools]
+bun = "1.4.1"
+"github:aviorstudio/gdam" = { version = "v0.0.8", asset_pattern = "gdam_Linux_x86_64.tar.gz", bin = "gdam" }
+"github:pocketbase/pocketbase" = { version = "v0.39.9", asset_pattern = "pocketbase_0.39.9_linux_amd64.zip", bin = "pocketbase" }
+"github:aviorstudio/gd-observe" = { version = "cli-v0.0.5", asset_pattern = "gdobs_Linux_x86_64.tar.gz", bin = "gdobs" }
+'''
+        installed = watch.tomllib.loads(config_toml)['tools']
+        root = Path('/tmp/tool-watch-fixture')
+        config = str(root/'.mise.toml')
+        outdated = {
+            'bun': {'source': {'path': config}, 'bump': '1.4.2'},
+            'github:aviorstudio/gdam': {'source': {'path': config}, 'latest': 'v0.0.9'},
+            # Equal and older cores are not updates, decoration included.
+            'github:pocketbase/pocketbase': {'source': {'path': config}, 'latest': 'v0.39.9'},
+            'github:aviorstudio/gd-observe': {'source': {'path': config}, 'latest': 'cli-v0.0.5'},
+        }
+        self.assertEqual(watch.updates(root, installed, outdated),
+                         [('bun', '1.4.1', '1.4.2'),
+                          ('github:aviorstudio/gdam', 'v0.0.8', 'v0.0.9')])
+
+    def test_table_form_decoration_variants_and_fail_closed(self):
+        root = Path('/tmp/tool-watch-fixture')
+        config = str(root/'.mise.toml')
+        installed = {'github:godotengine/godot': {'version': '4.4.1-stable', 'exe': 'godot'}}
+        newer = {'source': {'path': config}, 'latest': '4.5.1-stable'}
+        self.assertEqual(watch.updates(root, installed, {'github:godotengine/godot': newer}),
+                         [('github:godotengine/godot', '4.4.1-stable', '4.5.1-stable')])
+        for installed_entry, latest in [({'asset_pattern': 'x'}, 'v1.0.0'),
+                                        ({'version': 108}, 'v1.0.0'),
+                                        ({'version': 'v1.0.0'}, 'latest'),
+                                        ({'version': 'v1.0.0'}, 'v2.0'),
+                                        ({'version': 'two.point.oh'}, 'v2.0.1')]:
+            item = {'source': {'path': config}, 'latest': latest}
+            with self.assertRaises(ValueError, msg=f'{installed_entry} / {latest}'):
+                watch.updates(root, {'github:owner/tool': installed_entry}, {'github:owner/tool': item})

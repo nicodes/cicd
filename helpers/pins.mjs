@@ -44,6 +44,37 @@ const workflows = walk('.github').filter(file => /\.ya?ml$/.test(file));
 assert.ok(workflows.some(file => file.includes('/workflows/')), 'no workflows to check');
 const komizoActions = 'nicodes/komizo-actions';
 const komizoUses = [];
+
+// Misspelling guard, additive and network-free. A one-byte typo in a pinned
+// reference still satisfies the full-SHA rule but resolves to no repository,
+// surfacing only as a startup_failure at dispatch time that CI never sees —
+// komizo-be fd23b9c9 carried `nicodes/komozo-actions/publish@<sha>` (0x6f for
+// 0x69), invisible until every CD run failed at action resolution. Any org
+// within two edits of a portfolio org (docs/ACTIVE-PROJECTS.md) but not equal
+// to one, and any reference under a portfolio org within two edits of a known
+// fleet uses-target but not equal to it, is a hard error naming the correction.
+const portfolioOrgs = ['nicodes', 'aviorstudio', 'astrylogical'];
+const fleetUsesRepos = ['nicodes/komizo-actions', 'nicodes/cicd', 'aviorstudio/gdam-actions'];
+
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return row[b.length];
+}
+
+function closestOf(value, candidates) {
+  return candidates.reduce((best, candidate) =>
+    editDistance(value, candidate) < editDistance(value, best) ? candidate : best);
+}
+
 for (const file of workflows) {
   const document = Bun.YAML.parse(fs.readFileSync(file, 'utf8'));
   function inspect(value) {
@@ -56,6 +87,20 @@ for (const file of workflows) {
     }
     if (typeof value.uses === 'string' && !value.uses.startsWith('./')) {
       assert.match(value.uses, /^[\w.-]+\/[\w./-]+@[a-f0-9]{40}$/, `${file}: action must use a full commit SHA: ${value.uses}`);
+      const [owner, repository] = value.uses.split('@')[0].split('/');
+      if (portfolioOrgs.includes(owner)) {
+        const reference = `${owner}/${repository}`;
+        const candidates = fleetUsesRepos.filter(repo => repo.startsWith(`${owner}/`));
+        if (!candidates.includes(reference) && candidates.length > 0) {
+          const closest = closestOf(reference, candidates);
+          assert.ok(editDistance(reference, closest) > 2,
+            `${file}: '${reference}' is within a two-byte edit of fleet repository '${closest}' — likely a misspelling: ${value.uses}`);
+        }
+      } else {
+        const closest = closestOf(owner, portfolioOrgs);
+        assert.ok(editDistance(owner, closest) > 2,
+          `${file}: org '${owner}' is within a two-byte edit of portfolio org '${closest}' — likely a misspelling: ${value.uses}`);
+      }
       if (value.uses.startsWith(`${komizoActions}/`)) komizoUses.push({ file, uses: value.uses });
     }
     Object.values(value).forEach(inspect);

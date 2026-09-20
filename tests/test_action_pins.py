@@ -162,6 +162,46 @@ class ActionPinGuard(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('peeled commit SHA', result.stdout + result.stderr)
 
+    def test_misspelled_portfolio_org_is_refused_naming_the_correction(self):
+        # One-byte org typos pass the full-SHA rule but resolve to nothing.
+        for typo, correction in [('nicode', 'nicodes'), ('Nicodes', 'nicodes'),
+                                 ('aviorstudi', 'aviorstudio'), ('astrylogica', 'astrylogical')]:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_product(root, steps=[f'{typo}/some-action@{V3}'])
+                result = run_pins(root)
+                self.assertNotEqual(result.returncode, 0, typo)
+                output = result.stdout + result.stderr
+                self.assertIn(typo, output)
+                self.assertIn(correction, output)
+                self.assertIn('misspelling', output)
+
+    def test_misspelled_fleet_repository_is_refused_naming_the_correction(self):
+        # The komizo-be incident (fd23b9c9): nicodes/komozo-actions — 0x6f for
+        # 0x69 — satisfied the generic full-SHA rule while pointing at nothing,
+        # and every CD run failed at action resolution with CI blind to it.
+        for typo, correction in [('nicodes/komozo-actions', 'nicodes/komizo-actions'),
+                                 ('nicodes/cicdd', 'nicodes/cicd'),
+                                 ('aviorstudio/gdam-action', 'aviorstudio/gdam-actions')]:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_product(root, steps=[f'{typo}/some-action@{V3}'])
+                result = run_pins(root)
+                self.assertNotEqual(result.returncode, 0, typo)
+                output = result.stdout + result.stderr
+                self.assertIn(typo, output)
+                self.assertIn(correction, output)
+
+    def test_exact_fleet_and_distant_third_party_references_are_unaffected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=['aviorstudio/gdam-actions/install@'+V3,
+                                       f'nicodes/cicd/.github/workflows/deployed.yml@{V3}',
+                                       'nico/some-action@'+V3,  # three edits from nicodes
+                                       'docker/login-action@'+V1])
+            result = run_pins(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 class ActionPinUpdater(unittest.TestCase):
     def call(self, function, arguments, map_arguments=()):
