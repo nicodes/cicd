@@ -154,7 +154,10 @@ class WorkflowPinTests(unittest.TestCase):
                     match = USE_KEY.search(line)
                     if match:
                         entries.append(match.group('value').strip())
-                self.assertTrue(entries, f'{path.name} has no actions to pin')
+                if not entries:
+                    # Pure gh-api workflows (deployed.yml) carry no actions;
+                    # the pin rule is vacuously satisfied.
+                    continue
                 for value in entries:
                     self.assertRegex(value, SHA_PIN, f'{path.name}: uses {value}')
 
