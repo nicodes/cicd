@@ -9,18 +9,28 @@ import re
 import subprocess
 
 
+# The table is the allowlist: each row names its owner, the exact GitHub
+# repository whose production deployments are scanned, and the deployed image
+# components. Repositories are explicit per product, so a portfolio layout
+# without the fleet's `-be` suffix is a declared row rather than a convention
+# exception, and the lookup itself restricts every image reference.
 PRODUCTS = {
-    'ormos': ('nicodes', ['api', 'db', 'gate']),
-    'cazper': ('nicodes', ['api', 'db', 'gate']),
-    'komizo': ('nicodes', ['service', 'gate']),
-    'gdam': ('aviorstudio', ['api', 'db', 'gate']),
-    'termcade': ('aviorstudio', ['api', 'db', 'gate', 'maintenance']),
-    'astry': ('astrylogical', ['api', 'pb', 'gate']),
+    'ormos': ('nicodes', 'ormos-be', ['api', 'db', 'gate']),
+    'cazper': ('nicodes', 'cazper-be', ['api', 'db', 'gate']),
+    'komizo': ('nicodes', 'komizo-be', ['service', 'gate']),
+    'gdam': ('aviorstudio', 'gdam-be', ['api', 'db', 'gate']),
+    'termcade': ('aviorstudio', 'termcade-be', ['api', 'db', 'gate', 'maintenance']),
+    'astry': ('astrylogical', 'astry-be', ['api', 'pb', 'gate']),
+    # cd.yml publishes ghcr.io/aviorstudio/fieldsofrevik-{api,godot-api,db,gate,config};
+    # deploy/compose.yml runs the first four plus a digest-pinned stock redis.
+    # config is a `FROM scratch` compose-file transport with no executable at
+    # all, and redis is upstream's image, so neither is a scanable product image.
+    'fieldsofrevik': ('aviorstudio', 'fieldsofrevik', ['api', 'godot-api', 'db', 'gate']),
 }
 
 def product_images(project, repository, revision):
-    owner, components = PRODUCTS[project]
-    if repository != f'{owner}/{project}-be' or not re.fullmatch(r'[a-f0-9]{40}', revision):
+    owner, name, components = PRODUCTS[project]
+    if repository != f'{owner}/{name}' or not re.fullmatch(r'[a-f0-9]{40}', revision):
         raise ValueError('repository or revision does not match the declared product')
     return [f'ghcr.io/{owner}/{project}-{component}:{revision}' for component in components]
 
@@ -66,11 +76,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', required=True, choices=list(PRODUCTS))
     args = parser.parse_args()
-    owner, components = PRODUCTS[args.project]
-    repository = os.environ.get('GITHUB_REPOSITORY', f'{owner}/{args.project}-be')
-    if repository != f'{owner}/{args.project}-be':
+    owner, repository, components = PRODUCTS[args.project]
+    detected = os.environ.get('GITHUB_REPOSITORY', repository)
+    if detected != repository:
         raise ValueError('repository does not match the declared product')
-    revisions = deployed_revisions(repository)
+    revisions = deployed_revisions(detected)
     spec = importlib.util.spec_from_file_location('scan_image', Path(__file__).with_name('scan-image.py'))
     scanner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(scanner)
