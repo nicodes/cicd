@@ -142,6 +142,9 @@ The caller keeps `on: schedule` (weekly, own staggered minute) plus
 permissions:
   contents: read
   issues: write
+concurrency:
+  group: tool-watch
+  cancel-in-progress: false
 jobs:
   watch:
     uses: nicodes/cicd/.github/workflows/tools.yml@<full-40-hex-cicd-commit>
@@ -157,11 +160,23 @@ Caller requirements:
   nicodes/cicd run 35483270243).
 
 There are no inputs. The reusable job keeps the fleet's `main`-only guard
-(`if: github.ref == 'refs/heads/main'`, evaluated in the caller's context),
-the `tool-watch` concurrency group with `cancel-in-progress: false`, and the
-`tool-updates` artifact (`.artifacts/tool-updates.json`, 30-day retention,
-`if-no-files-found: ignore`, uploaded `if: always()`). It runs the caller's
-vendored `scripts/engineering/helpers/watch-tools.py` with the caller's token.
+(`if: github.ref == 'refs/heads/main'`, evaluated in the caller's context)
+and the `tool-updates` artifact (`.artifacts/tool-updates.json`, 30-day
+retention, `if-no-files-found: ignore`, uploaded `if: always()`). It runs the
+caller's vendored `scripts/engineering/helpers/watch-tools.py` with the
+caller's token.
+
+Concurrency is caller-owned: the caller keeps its workflow-level
+`tool-watch` group (`cancel-in-progress: false`) and the called job
+deliberately declares none. Never mirror the group into a called job: the
+caller's job waits for the called run to finish while the called `watch` job
+— declaring the same `tool-watch` group the caller's workflow-level block
+already holds — queues behind the still-running caller, never gets a runner,
+and fails with zero steps, no runner and no annotation. That caller/called
+concurrency-group collision is the mechanism of the termcade zero-step
+tool-watch failure (run 35528234060). Diagnostic tells for a 0s tool-watch
+failure: ZERO steps and NO annotation is a concurrency-group collision;
+ZERO steps WITH an annotation is a secret or permission evaluation failure.
 
 ### What this repository changed
 
@@ -388,6 +403,10 @@ name: Backup
 permissions:
   contents: read
   issues: write
+concurrency:
+  group: deploy-production
+  queue: max
+  cancel-in-progress: false
 jobs:
   backup:
     name: Backup
@@ -416,10 +435,12 @@ Caller requirements:
   is required, but not provided while calling" annotation (fleet report:
   aviorstudio/gdam-be run 35488772050). Map the rename explicitly instead:
   `KOMIZO_DEPLOY_KEY: "${{ secrets.SSH_DEPLOY_KEY }}"`. The same 0s,
-  zero-steps "Backup / Backup" signature with no annotation means the
-  caller's `production` environment protection rejected the job — check its
-  branch policy and required reviewers before suspecting the reusable; two
-  products run green on the identical reusable SHA.
+  zero-steps "Backup / Backup" signature with no annotation, once the
+  caller/called concurrency groups are ruled out (see the workflow-level
+  `concurrency:` requirement below), means the caller's `production`
+  environment protection rejected the job — check its branch policy and
+  required reviewers before suspecting the reusable; two products run green
+  on the identical reusable SHA.
 - Repo-level secrets — environment-scoped secrets resolve empty through the
   call; `environment: production` applies its protection rules but cannot
   forward environment secrets to the called workflow (fleet report:
@@ -436,9 +457,28 @@ Caller requirements:
   validation with zero jobs — before any preflight job could run (fleet
   report: aviorstudio/fieldsofrevik#202; live matrix 2026-09-20:
   nicodes/cicd runs 35483270260 under-granted vs 35483270226 with the floor).
-- No `concurrency:` block — the called job owns the `deploy-production` queue
-  with `queue: max`, and concurrency groups scope to the caller's repository;
-  a caller-side block is redundant but startup-safe either way.
+- Workflow-level `concurrency:` block owning `deploy-production`
+  (`queue: max`, `cancel-in-progress: false`). Concurrency is
+  caller-owned: the called job deliberately declares no group, so the
+  caller must keep the queue. Never mirror the group into a called job:
+  the caller's job waits for the called run to finish while the called
+  `backup` job — declaring the same `deploy-production` group the caller's
+  workflow-level block already holds — queues behind the still-running
+  caller, never gets a runner, and fails with zero steps, no runner and no
+  annotation. That caller/called concurrency-group collision is the
+  komozo/termcade zero-step Backup failure: their callers keep the
+  workflow-level `deploy-production` group the old per-repo copies used,
+  and the reused body re-declared it (controlled proof 2026-09-26,
+  nicodes/cicd: run 35529910664 with the called-side group fails
+  "Backup / Backup" with zero steps, while 35529910654 — identical, no
+  caller-side concurrency — ran the steps and failed at the expected
+  dummy-secret boundary). Diagnostic tells for a 0s "Backup / Backup"
+  failure: ZERO steps and NO annotation is a concurrency-group collision
+  (or a `production` environment protection rejection — rule out the
+  group owners first, then the branch policy and required reviewers);
+  ZERO steps WITH an annotation is a secret or permission evaluation
+  failure, like the missing `KOMIZO_DEPLOY_KEY` above (the gdam case,
+  aviorstudio/gdam-be run 35488772050).
 
 Beyond those, the caller keeps its own `scripts/export-backup.sh` host-side
 exporter. Vars and secrets resolve in the caller's repository context. The

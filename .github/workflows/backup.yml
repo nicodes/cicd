@@ -14,9 +14,13 @@ name: Backup
 # The mapped or inherited secrets must be repo-level in the caller:
 # environment-scoped secrets resolve empty through the call (fleet report:
 # aviorstudio/fieldsofrevik#202), while the `production` environment below
-# still applies its caller-side protection rules. Callers need no
-# `concurrency:` block: the called job owns the `deploy-production` queue and
-# the group scopes to the caller's repository.
+# still applies its caller-side protection rules. Concurrency is CALLER-owned:
+# each caller keeps its workflow-level `deploy-production` group
+# (`queue: max`, `cancel-in-progress: false`) and this file deliberately
+# declares none — a called job naming the caller's group queues behind the
+# still-running caller and fails with zero steps, no runner and no annotation
+# (controlled proof 2026-09-26: nicodes/cicd run 35529910664 with the
+# collision vs 35529910654 without caller-side concurrency).
 "on":
   workflow_call:
     inputs:
@@ -52,10 +56,6 @@ jobs:
     environment: production
     permissions:
       contents: read
-    concurrency:
-      group: deploy-production
-      queue: max
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

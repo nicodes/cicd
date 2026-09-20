@@ -111,10 +111,19 @@ class ToolWatchWorkflowTests(unittest.TestCase):
     def test_watch_stays_main_only(self):
         self.assertEqual(self.watch['if'], "github.ref == 'refs/heads/main'")
 
-    def test_concurrency_group_never_cancels_a_running_watch(self):
-        self.assertEqual(self.watch['concurrency'],
-                         {'group': 'tool-watch', 'cancel-in-progress': False})
+    def test_watch_declares_no_concurrency_and_the_readme_keeps_it_caller_owned(self):
+        # Concurrency is caller-owned. A called job naming the caller's
+        # workflow-level `tool-watch` group queues behind the still-running
+        # caller and fails with zero steps, no runner and no annotation
+        # (fleet: termcade tool-watch run 35528234060).
+        self.assertNotIn('concurrency', self.watch)
         self.assertEqual(self.watch['timeout-minutes'], 40)
+        readme = (ROOT/'README.md').read_text()
+        section = readme[readme.index('### Caller contract: tool watch'):
+                         readme.index('### What this repository changed')]
+        flat = ' '.join(section.split())
+        self.assertIn('Concurrency is caller-owned', flat)
+        self.assertIn('tool-watch', flat)
 
     def test_watch_permissions_are_read_plus_issues_only(self):
         self.assertEqual(self.watch['permissions'], {'contents': 'read', 'issues': 'write'})

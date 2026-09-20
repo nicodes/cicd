@@ -109,14 +109,30 @@ class ReusableBackupWorkflow(unittest.TestCase):
             if re.search(r'\buses:\s*\S', line):
                 self.assertRegex(line, r'uses:\s*[\w.-]+/[\w./-]+@[a-f0-9]{40}\s+#\s*v\S+$', line)
 
-    def test_backup_job_matches_the_fleet_concurrency_contract(self):
+    def test_backup_job_matches_the_fleet_contract_and_declares_no_concurrency(self):
         job = self.document['jobs']['backup']
         self.assertEqual(job['runs-on'], 'ubuntu-24.04')
         self.assertEqual(job['environment'], 'production')
         self.assertEqual(job['timeout-minutes'], 40)
         self.assertEqual(job['permissions'], {'contents': 'read'})
-        self.assertEqual(job['concurrency'], {
-            'group': 'deploy-production', 'queue': 'max', 'cancel-in-progress': False})
+        # Concurrency is caller-owned. A called job naming the caller's
+        # workflow-level `deploy-production` group queues behind the
+        # still-running caller, never gets a runner, and fails with zero
+        # steps, no runner and no annotation (controlled proof 2026-09-26:
+        # nicodes/cicd run 35529910664 with the collision vs 35529910654
+        # without caller-side concurrency).
+        self.assertNotIn('concurrency', job)
+        for job_body in self.document['jobs'].values():
+            self.assertNotIn('concurrency', job_body)
+
+    def test_readme_requires_the_caller_owned_concurrency_contract(self):
+        readme = (ROOT/'README.md').read_text()
+        section = readme[readme.index('## Reusable backup workflow'):
+                         readme.index('<!-- ws1: reusable-backup end -->')]
+        flat = ' '.join(section.split())
+        for phrase in ('Concurrency is caller-owned', 'deploy-production',
+                       'queue: max', 'concurrency-group collision'):
+            self.assertIn(phrase, flat, phrase)
 
     def test_connect_step_binds_the_caller_server_and_deploy_user(self):
         step = next(step for step in self.steps('backup')
