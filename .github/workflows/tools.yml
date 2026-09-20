@@ -1,4 +1,11 @@
 name: Tool watch
+# Reusable tool-watch body. The caller keeps its schedule/workflow_dispatch
+# and must grant the workflow at least `contents: read` + `issues: write`: a
+# called workflow can only restrict, never elevate, the caller's token, and a
+# smaller grant startup_failures the whole run with zero jobs before any job
+# exists (live matrix 2026-09-20: under-granted
+# https://github.com/nicodes/cicd/actions/runs/35483270243 vs with the floor
+# https://github.com/nicodes/cicd/actions/runs/35483270273).
 on:
   workflow_call:
 permissions:

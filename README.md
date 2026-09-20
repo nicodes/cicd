@@ -110,8 +110,9 @@ called job, because a called workflow can only restrict, never elevate, a grant:
 - `deployments: read` — `scan-deployed.py` walks the production deployment
   history for the latest attempt and the last success.
 - `issues: write` — the report-failure job files the owned failure issue;
-  without the grant that job fails at runtime, not at validation
-  (fleet report: aviorstudio/fieldsofrevik#202).
+  without the grant the whole call startup_failures at validation with zero
+  jobs (fleet report: aviorstudio/fieldsofrevik#202; live matrix 2026-09-20:
+  nicodes/cicd run 35483270307).
 
 `project` is required and is passed to the caller's own vendored
 `scripts/engineering/helpers/scan-deployed.py`; that path stays the contract.
@@ -141,8 +142,9 @@ Caller requirements:
 - `contents: read` — the watch job's checkout of the caller's vendored
   `watch-tools.py` and the pinned cicd report helper.
 - `issues: write` — the report-failure step files the owned failure issue; a
-  missing grant fails at runtime, not at validation
-  (fleet report: aviorstudio/fieldsofrevik#202).
+  missing grant startup_failures the whole call at validation with zero jobs
+  (fleet report: aviorstudio/fieldsofrevik#202; live matrix 2026-09-20:
+  nicodes/cicd run 35483270243).
 
 There are no inputs. The reusable job keeps the fleet's `main`-only guard
 (`if: github.ref == 'refs/heads/main'`, evaluated in the caller's context),
@@ -392,8 +394,15 @@ Caller requirements:
 
 - `production` environment — the reusable job's `environment: production`
   resolves in the caller's repository and carries its deployment protections.
-- `secrets: inherit` — the only channel the called workflow has to the
-  caller's secrets; nothing is passed without it.
+- `secrets: inherit`, or a named map of exactly the three secrets the
+  reusable declares (`KOMIZO_DEPLOY_KEY`, `BACKUP_S3_ACCESS_KEY`,
+  `BACKUP_S3_SECRET_KEY`) — naming any secret the reusable does not declare
+  startup_failures the whole run with zero jobs (live matrix 2026-09-20:
+  nicodes/komizo-actions run 35483654530).
+- Repo-level secrets — environment-scoped secrets resolve empty through the
+  call; `environment: production` applies its protection rules but cannot
+  forward environment secrets to the called workflow (fleet report:
+  aviorstudio/fieldsofrevik#202).
 - `KOMIZO_DEPLOY_KEY` secret, `KOMIZO_SERVER_URL` (or the server var the
   caller passes) and `KOMIZO_KNOWN_HOSTS` — the verified-snapshot SSH
   connection.
@@ -402,21 +411,23 @@ Caller requirements:
   snapshot is stored.
 - Workflow-level `contents: read` plus `issues: write` — the report-failure
   job files the owned failure issue, and a called workflow cannot elevate a
-  missing grant, so without `issues: write` that job fails at runtime
-  (fleet report: aviorstudio/fieldsofrevik#202).
+  missing grant, so without `issues: write` the whole run startup_failures at
+  validation with zero jobs — before any preflight job could run (fleet
+  report: aviorstudio/fieldsofrevik#202; live matrix 2026-09-20:
+  nicodes/cicd runs 35483270260 under-granted vs 35483270226 with the floor).
+- No `concurrency:` block — the called job owns the `deploy-production` queue
+  with `queue: max`, and concurrency groups scope to the caller's repository;
+  a caller-side block is redundant but startup-safe either way.
 
-The caller must keep its `production` environment, its own
-`scripts/export-backup.sh` host-side exporter, and provide (with
-`secrets: inherit`) the `KOMIZO_DEPLOY_KEY` secret, the `KOMIZO_KNOWN_HOSTS`,
-`BACKUP_S3_HOSTNAME` and `BACKUP_S3_BUCKET` variables, and the
-`BACKUP_S3_ACCESS_KEY` and `BACKUP_S3_SECRET_KEY` secrets. Vars and secrets
-resolve in the caller's repository context. The reusable workflow checks the
-caller out, connects through `komizo-actions/connect`, runs the exporter,
-derives `taken_at` from the receipt's `verified_at`, PUTs the sealed pair with
-the pinned cicd `helpers/upload-backup.py`, uploads the artifact for 30 days,
-and reports failures through the pinned cicd `helpers/report-failure.py`. The
-cicd helper source is itself checked out at a pinned full commit SHA, so no
-runtime fetch of a moving ref is involved.
+Beyond those, the caller keeps its own `scripts/export-backup.sh` host-side
+exporter. Vars and secrets resolve in the caller's repository context. The
+reusable workflow checks the caller out, connects through
+`komizo-actions/connect`, runs the exporter, derives `taken_at` from the
+receipt's `verified_at`, PUTs the sealed pair with the pinned cicd
+`helpers/upload-backup.py`, uploads the artifact for 30 days, and reports
+failures through the pinned cicd `helpers/report-failure.py`. The cicd helper
+source is itself checked out at a pinned full commit SHA, so no runtime fetch
+of a moving ref is involved.
 
 What the thin caller replaces, in full:
 

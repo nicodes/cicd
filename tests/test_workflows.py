@@ -159,6 +159,40 @@ class WorkflowPinTests(unittest.TestCase):
                     self.assertRegex(value, SHA_PIN, f'{path.name}: uses {value}')
 
 
+class CallerContractFloorTests(unittest.TestCase):
+    """Called workflows can only restrict, never elevate, the caller's grant:
+    an under-granted caller startup_failures the run with zero jobs
+    (live matrix 2026-09-20, nicodes/cicd: tools 35483270243 vs 35483270273;
+    vuln 35483270307 vs 35483270237). The README caller contracts must
+    therefore publish a permission floor covering every called job."""
+
+    def readme_slice(self, begin, end):
+        text = (ROOT/'README.md').read_text()
+        return ' '.join(text[text.index(begin):text.index(end)].split())
+
+    def test_vuln_floor_covers_every_called_job_permission(self):
+        document = load('vuln.yml')
+        floor = set()
+        for job in document['jobs'].values():
+            floor.update(job['permissions'])
+        self.assertEqual(floor, {'contents', 'packages', 'deployments', 'issues'})
+        section = self.readme_slice('### Caller contract: vulnerability scan',
+                                    '### Caller contract: tool watch')
+        for scope in ('contents: read', 'packages: read',
+                      'deployments: read', 'issues: write'):
+            self.assertIn(scope, section, scope)
+        self.assertIn('zero jobs', section)
+
+    def test_tools_floor_covers_every_called_job_permission(self):
+        watch = load('tools.yml')['jobs']['watch']
+        self.assertEqual(set(watch['permissions']), {'contents', 'issues'})
+        section = self.readme_slice('### Caller contract: tool watch',
+                                    '### What this repository changed')
+        self.assertIn('contents: read', section)
+        self.assertIn('issues: write', section)
+        self.assertIn('zero jobs', section)
+
+
 class ToolMaintenanceRenameTests(unittest.TestCase):
     def test_own_maintenance_workflow_survives_under_its_new_name(self):
         document = load('tool-maintenance.yml')

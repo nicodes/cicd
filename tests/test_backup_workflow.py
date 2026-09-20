@@ -58,13 +58,48 @@ class ReusableBackupWorkflow(unittest.TestCase):
                     checkouts.append(configuration)
         return checkouts
 
-    def test_declares_exactly_the_three_call_inputs(self):
+    def test_declares_exactly_the_three_call_inputs_and_three_named_secrets(self):
         trigger = self.document.get('on', self.document.get(True))
-        inputs = trigger['workflow_call']['inputs']
+        call = trigger['workflow_call']
+        inputs = call['inputs']
         self.assertEqual(set(inputs), {'product', 'server', 'user'})
         for name, specification in inputs.items():
             self.assertEqual(specification['type'], 'string', name)
             self.assertTrue(specification['required'], name)
+        # Callers may map these by name (e.g. komizo's SSH_DEPLOY_KEY rename);
+        # naming anything else startup_failures the call with zero jobs
+        # (live matrix 2026-09-20: nicodes/komizo-actions run 35483654530).
+        secrets = call['secrets']
+        self.assertEqual(set(secrets),
+                         {'KOMIZO_DEPLOY_KEY', 'BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY'})
+        for name, specification in secrets.items():
+            self.assertTrue(specification['required'], name)
+
+    def test_called_job_permissions_stay_within_the_documented_caller_floor(self):
+        # An under-granted caller startup_failures the whole run with zero
+        # jobs (live matrix 2026-09-20: nicodes/cicd runs 35483270260
+        # under-granted vs 35483270226 with the floor), so the README caller
+        # contract must publish the union of every called job's permissions.
+        floor = set()
+        for job in self.document['jobs'].values():
+            floor.update(job.get('permissions') or {})
+        self.assertEqual(floor, {'contents', 'issues'})
+        readme = (ROOT/'README.md').read_text()
+        section = readme[readme.index('## Reusable backup workflow'):
+                         readme.index('<!-- ws1: reusable-backup end -->')]
+        snippet = section[section.index('permissions:'):section.index('jobs:')]
+        self.assertIn('contents: read', snippet)
+        self.assertIn('issues: write', snippet)
+
+    def test_readme_pins_the_startup_failure_contract(self):
+        readme = (ROOT/'README.md').read_text()
+        section = readme[readme.index('## Reusable backup workflow'):
+                         readme.index('<!-- ws1: reusable-backup end -->')]
+        flat = ' '.join(section.split())
+        for phrase in ('startup_failure', 'zero jobs', 'Repo-level',
+                       'cannot elevate a missing grant', 'secrets: inherit',
+                       'KOMIZO_DEPLOY_KEY', 'queue: max'):
+            self.assertIn(phrase, flat, phrase)
 
     def test_every_action_reference_is_a_full_sha_pin_with_version_comment(self):
         self.assertTrue(self.pinned_actions())
