@@ -231,7 +231,7 @@ must carry in a product's snapshot after moving to this pin:
 
 | Helper | SHA256 |
 |---|---|
-| `pins.mjs` | `7e76a10e9bc3a2e99de341881f2e577e0f1bbc2af4a09e8d69d9b4bba069033c` |
+| `pins.mjs` | `42d301b3be92ac911d7db852918b06fca3e6e9181e728015b034868ace7d7216` |
 | `merge-checked.py` | `b86a1e741697e3f0034da2d3b7decc9af06a0d9e0f23cbd2d001dc90bd4c530e` |
 | `upload-backup.py` | `db56696bf8906daa3469e82c0be30b3ca50dff4057634ecfdc6e6ae32377e18a` |
 | `vendor-snapshot.py` | `fcecb4b627cbbf8e91c3e48fa02e0b8e3329fde10e916a5a2e5d6c68cada1027` |

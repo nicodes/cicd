@@ -22,7 +22,12 @@ for (const [name, version] of Object.entries(config.tools)) {
 }
 const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const applications = tracked.filter(file => /^[^/]+\/package\.json$/.test(file)).map(file => path.dirname(file));
-assert.ok(applications.includes('app'), 'the product app must be tracked');
+// Every tracked top-level manifest directory is an application: `app/` is the
+// convention, not a requirement (aviorstudio/fieldsofrevik's Bun application
+// is `playwright/`), and a repo with no Bun application at all — a pure
+// Godot/game repo — has nothing to check here; the mise exact-version and
+// workflow/action-pins checks below still apply. Same scan as
+// helpers/update-bun.py.
 for (const directory of applications) {
   const app = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
   assert.equal(app.packageManager, `bun@${config.tools.bun}`, `${directory}: Bun pin differs`);
