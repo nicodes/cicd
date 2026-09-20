@@ -604,8 +604,10 @@ unaffected.
 Source: nicodes/komizo-be `docs/deployed-drift-reusable-handoff.md` (added in
 komizo-be@bc2a1a5f; the per-product check and its rationale live in
 `.github/workflows/deployed.yml`, komizo-be#137). Ported here as the
-fleet-wide adoption contract; the reusable workflow itself is not yet
-implemented in this repository.
+fleet-wide adoption contract. The reusable workflow has since been
+implemented — see the `ws13/deployed-reusable` section below; its one
+deliberate delta from the floor stated here is documented there (the caller
+must also grant `contents: read`).
 
 What the per-product check does today — hourly, deliberately off the top of
 the hour to dodge GitHub's scheduled-run queue congestion, with
@@ -646,3 +648,77 @@ The contract for the reusable form when it lands:
 Residual product-local choice: none blocking; each product's cron minute stays
 caller-side.
 <!-- ws9/fleet-helper-compat: end -->
+
+<!-- ws13/deployed-reusable: begin -->
+## Reusable deployed-drift workflow (deployed.yml)
+
+The handoff contract above is now implemented:
+`.github/workflows/deployed.yml` is the `workflow_call` body, ported from
+komizo-be's in-repo check with its preserve-exactly clauses intact
+(server-side `status=success` filtering, fail-closed reads, the
+missing-commits list on failure). komizo is the first adopter, migrating from
+its in-repo copy.
+
+### Caller contract: deployed-is-main drift check
+
+Thin caller example — the caller keeps the triggers (fleet convention
+staggers cron minutes off the top of the hour to dodge GitHub's scheduled-run
+queue congestion) and passes the one input:
+
+```yaml
+name: Deployed is main
+on:
+  schedule:
+    - cron: '37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deployed:
+    uses: nicodes/cicd/.github/workflows/deployed.yml@<full-40-hex-cicd-commit>
+    with:
+      deploy-workflow: cd.yml
+```
+
+- Permission floor: `actions: read` AND `contents: read`. The handoff
+  contract names only `actions: read`; the body's main's-HEAD and compare
+  reads are contents endpoints that 404 without `contents: read` on a private
+  repository — komizo-be, the first adopter, is private, and its in-repo
+  workflow declared both. A called workflow can only restrict, never elevate,
+  the caller's token: a smaller grant startup_failures the whole run with
+  zero jobs before any job exists (live matrix 2026-09-20: under-granted
+  https://github.com/nicodes/cicd/actions/runs/35483270243 vs with the floor
+  https://github.com/nicodes/cicd/actions/runs/35483270273).
+- No `secrets:` block: the job uses the implicit `GITHUB_TOKEN`.
+- `github.repository` resolves to the CALLER in a called workflow, which is
+  why the whole body ports with the single `deploy-workflow` input (the
+  caller's deploy workflow FILE name, e.g. `cd.yml`).
+- Pin per the single-reusable-pin policy: a full 40-hex cicd commit.
+- There is deliberately no issue-writer job: the alarm IS the failing check
+  (the `::error::` annotation plus the missing-commits list), matching the
+  source workflow; filing an issue would add `issues: write` to the floor.
+
+### Adaptations from the contract and the source workflow, all deliberate
+
+- The caller floor adds `contents: read` to the contract's `actions: read`
+  (the private-repository contents-endpoint requirement above; the source
+  workflow already declared both).
+- Runner `ubuntu-latest` → `ubuntu-24.04` (fleet runner pin).
+- `secrets.GITHUB_TOKEN` → `github.token` (equivalent in a called workflow;
+  this repository's convention).
+- The failure message drops the `komizo-be#137` suffix: the run output stays
+  fleet-generic, and the provenance lives in the reusable's header comments.
+- Job/step timeouts added (5/3 minutes); the source relied on the default.
+
+### First-adopter watch items (komizo)
+
+- Swap the local job for the caller above in the same convergence wave
+  cadence, keeping komizo-be's own cron minute (`:37`) caller-side.
+- Dispatch the first run manually (`workflow_dispatch`) and confirm the
+  caller grant satisfies the floor and `deploy-workflow: cd.yml` resolves —
+  an under-grant surfaces as a startup_failure with zero jobs, not a failing
+  step.
+<!-- ws13/deployed-reusable: end -->
