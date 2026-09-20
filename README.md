@@ -233,7 +233,7 @@ must carry in a product's snapshot after moving to this pin:
 |---|---|
 | `pins.mjs` | `42d301b3be92ac911d7db852918b06fca3e6e9181e728015b034868ace7d7216` |
 | `merge-checked.py` | `b86a1e741697e3f0034da2d3b7decc9af06a0d9e0f23cbd2d001dc90bd4c530e` |
-| `upload-backup.py` | `db56696bf8906daa3469e82c0be30b3ca50dff4057634ecfdc6e6ae32377e18a` |
+| `upload-backup.py` | `8194f864dbd432c7d6c71d82c1dc4d0218dc1e0abe9f5483360a140e9fa3b324` |
 | `vendor-snapshot.py` | `fcecb4b627cbbf8e91c3e48fa02e0b8e3329fde10e916a5a2e5d6c68cada1027` |
 | `scan-deployed.py` | `7078fd4b5f96adeca51e0544263059bd1054e450193235795daa9a3027815b68` |
 <!-- ws7/reusable-pin: end -->
@@ -399,6 +399,17 @@ Caller requirements:
   `BACKUP_S3_SECRET_KEY`) — naming any secret the reusable does not declare
   startup_failures the whole run with zero jobs (live matrix 2026-09-20:
   nicodes/komizo-actions run 35483654530).
+  `secrets: inherit` only forwards repo-level secrets that exist under
+  exactly those names: a caller whose deploy key lives under another name
+  (e.g. `SSH_DEPLOY_KEY`) or only environment-scoped gets a called job that
+  fails at evaluation in ~0s with zero steps and a "Secret KOMIZO_DEPLOY_KEY
+  is required, but not provided while calling" annotation (fleet report:
+  aviorstudio/gdam-be run 35488772050). Map the rename explicitly instead:
+  `KOMIZO_DEPLOY_KEY: "${{ secrets.SSH_DEPLOY_KEY }}"`. The same 0s,
+  zero-steps "Backup / Backup" signature with no annotation means the
+  caller's `production` environment protection rejected the job — check its
+  branch policy and required reviewers before suspecting the reusable; two
+  products run green on the identical reusable SHA.
 - Repo-level secrets — environment-scoped secrets resolve empty through the
   call; `environment: production` applies its protection rules but cannot
   forward environment secrets to the called workflow (fleet report:
@@ -427,7 +438,29 @@ receipt's `verified_at`, PUTs the sealed pair with the pinned cicd
 `helpers/upload-backup.py`, uploads the artifact for 30 days, and reports
 failures through the pinned cicd `helpers/report-failure.py`. The cicd helper
 source is itself checked out at a pinned full commit SHA, so no runtime fetch
-of a moving ref is involved.
+of a moving ref is involved. The connect pin is `komizo-actions` v0.0.11
+(`b032fc88`) — the fleet-proven revision; its `connect/` tree is
+byte-identical to v0.0.10's, so the pin records provenance, not a behavior
+change.
+
+Object-storage semantics of the upload helper: the PUT carries
+`If-None-Match: *` as its overwrite guard, and a compliant store answers 2xx
+for an absent object or 412/409 for a present one (the latter fails the run
+as "backup object already exists"). Some S3-compatible gateways instead
+answer the conditional PUT with 404 (Azure-fronted stores returning
+BlobNotFound) when the object is absent; the helper treats exactly that
+answer as the probe reporting "not yet PUT" and retries once without the
+precondition. A persistent 404 (wrong bucket or hostname), an unreachable
+host, and missing/empty `BACKUP_S3_*` configuration all fail with the
+provider's error code or the variable name in the message — read the step
+log before retrying anything.
+
+Bump-along rule for the helper checkout: both jobs pin the cicd helper
+source (`.cicd`) to a full commit SHA, so a cicd merge that changes
+`helpers/` does NOT change what callers run until that ref moves. The PR
+changing the helper cannot name its own merge SHA; the immediately following
+PR bumps both `ref:` pins to the previous merge commit. Never bump one
+checkout without the other (a test enforces they stay equal).
 
 What the thin caller replaces, in full:
 

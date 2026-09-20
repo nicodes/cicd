@@ -98,11 +98,36 @@ def credentials():
     for name in CONTRACT:
         value = os.environ.get(name)
         if not isinstance(value, str) or value == '':
-            raise ValueError(f'missing {name}')
+            kind = 'secret' if name in ('BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY') else 'variable'
+            raise ValueError(
+                f'missing {name}: the reusable backup workflow reads it from a repo-level '
+                f'{kind} in the CALLER repository. Environment-scoped secrets resolve empty '
+                'through workflow_call, and `secrets: inherit` only forwards names that '
+                f'exist; create {name} at repository level in the caller and re-run')
         values[name] = value
     values['BACKUP_S3_HOSTNAME'] = hostname(values['BACKUP_S3_HOSTNAME'])
     values['BACKUP_S3_BUCKET'] = bucket_name(values['BACKUP_S3_BUCKET'])
     return values
+
+
+def error_detail(error):
+    """Reduce a bounded slice of the provider's error body to its S3 code/message."""
+    try:
+        body = error.read(4096)
+    except (OSError, ValueError):
+        return ''
+    if not body:
+        return ''
+    text = body.decode('utf-8', 'replace')
+    code = re.search(r'<Code>([^<]+)</Code>', text)
+    message = re.search(r'<Message>([^<]+)</Message>', text)
+    if code:
+        detail = code.group(1).strip()
+        if message:
+            detail = f'{detail}: {message.group(1).strip()}'
+        return f' ({detail})'
+    snippet = ' '.join(text.split())[:200]
+    return f' ({snippet})' if snippet else ''
 
 
 def authorization(method, url, headers, payload_hash, access_key, secret_key):
@@ -123,16 +148,17 @@ def authorization(method, url, headers, payload_hash, access_key, secret_key):
     return f'AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed}, Signature={signature}'
 
 
-def put_object(url, body, content_type, access_key, secret_key, host):
+def put_object(url, body, content_type, access_key, secret_key, host, conditional=True):
     payload_hash = hashlib.sha256(body).hexdigest()
     now = datetime.now(timezone.utc)
     headers = {
         'Host': host,
         'Content-Type': content_type,
-        'If-None-Match': '*',
         'x-amz-content-sha256': payload_hash,
         'x-amz-date': now.strftime('%Y%m%dT%H%M%SZ'),
     }
+    if conditional:
+        headers['If-None-Match'] = '*'
     headers['Authorization'] = authorization('PUT', url, headers, payload_hash, access_key, secret_key)
     request = urllib.request.Request(url, data=body, method='PUT', headers=headers)
     try:
@@ -143,8 +169,21 @@ def put_object(url, body, content_type, access_key, secret_key, host):
             return status
     except urllib.error.HTTPError as error:
         if error.code in {409, 412}:
-            raise ValueError('backup object already exists') from error
-        raise RuntimeError(f'backup PUT returned HTTP {error.code}') from error
+            raise ValueError(f'backup object already exists{error_detail(error)}') from error
+        if error.code == 404 and conditional:
+            # Some S3-compatible gateways answer the If-None-Match: *
+            # precondition with 404 (e.g. Azure-fronted stores returning
+            # BlobNotFound) when the object is absent, instead of performing
+            # the write. Absent is exactly what the precondition asks for:
+            # treat the 404 as the probe answering "not yet PUT" and retry
+            # once without the header. A compliant store never reaches this
+            # branch (absent: 2xx, present: 412), and a genuine 404 (wrong
+            # bucket or hostname) fails the retry below with the provider's
+            # own error code in the message.
+            return put_object(url, body, content_type, access_key, secret_key, host, conditional=False)
+        raise RuntimeError(f'backup PUT returned HTTP {error.code}{error_detail(error)}') from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f'backup PUT could not reach {host}: {error.reason}') from error
 
 
 def upload(slug, cms, receipt, taken_at):
