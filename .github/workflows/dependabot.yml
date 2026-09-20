@@ -21,6 +21,12 @@ name: Dependabot
 #     SHA it verified before merging.
 on:
   workflow_call:
+    inputs:
+      dispatch-target:
+        description: Merged-main workflow filename to dispatch first; empty falls back to cd.yml then ci.yml
+        required: false
+        type: string
+        default: ''
 permissions:
   contents: write
   pull-requests: write
@@ -61,4 +67,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          DISPATCH_TARGET: ${{ inputs.dispatch-target }}
         run: python3 scripts/engineering/helpers/merge-checked.py
