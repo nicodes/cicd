@@ -16,9 +16,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    concurrency:
-      group: tool-watch
-      cancel-in-progress: false
+    # Concurrency is CALLER-owned: the caller keeps its workflow-level
+    # `tool-watch` group (`cancel-in-progress: false`) and this job declares
+    # none — a called job naming the caller's group queues behind the
+    # still-running caller and fails with zero steps, no runner and no
+    # annotation (fleet: termcade tool-watch run 35528234060).
     permissions:
       contents: read
       issues: write
