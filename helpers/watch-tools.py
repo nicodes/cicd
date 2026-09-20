@@ -141,7 +141,11 @@ def main():
         file.write_text(body)
         command = (['gh', 'issue', 'edit', str(min(i['number'] for i in issues))] if issues
                    else ['gh', 'issue', 'create', '--title', title])
-        subprocess.run([*command, '--repo', repo, '--assignee', 'nicodes', '--body-file', str(file)],
+        # gh issue edit rejects --assignee: assignment there is the additive
+        # --add-assignee (already-assigned stays assigned). gh issue create has
+        # only --assignee, so the two paths cannot share one flag.
+        assignee = '--add-assignee' if issues else '--assignee'
+        subprocess.run([*command, '--repo', repo, assignee, 'nicodes', '--body-file', str(file)],
                        check=True, timeout=60)
 
 
