@@ -1,4 +1,22 @@
 name: Backup
+# Reusable nightly encrypted-backup body. Each product keeps a thin caller
+# (schedule, workflow_dispatch, main-branch guard) that grants the workflow at
+# least `contents: read` + `issues: write` and calls this file pinned to a
+# full cicd commit SHA. Two caller shapes startup_failure the whole run with
+# zero jobs, before any preflight job could run (live matrix 2026-09-20:
+# https://github.com/nicodes/cicd/actions/runs/35483270260 under-granted vs
+# https://github.com/nicodes/cicd/actions/runs/35483270226 with the floor):
+#   - granting less than a called job declares: a called workflow can only
+#     restrict, never elevate, the caller's token, and the report job needs
+#     `issues: write`;
+#   - naming secrets the caller maps that this file does not declare — use
+#     `secrets: inherit`, or map exactly the three secrets declared below.
+# The mapped or inherited secrets must be repo-level in the caller:
+# environment-scoped secrets resolve empty through the call (fleet report:
+# aviorstudio/fieldsofrevik#202), while the `production` environment below
+# still applies its caller-side protection rules. Callers need no
+# `concurrency:` block: the called job owns the `deploy-production` queue and
+# the group scopes to the caller's repository.
 "on":
   workflow_call:
     inputs:
@@ -13,6 +31,16 @@ name: Backup
       user:
         description: SSH deploy user for the verified-snapshot connection
         type: string
+        required: true
+    secrets:
+      KOMIZO_DEPLOY_KEY:
+        description: Repo-level SSH deploy key for the verified-snapshot connection
+        required: true
+      BACKUP_S3_ACCESS_KEY:
+        description: Repo-level object-storage access key for the sealed-pair PUT
+        required: true
+      BACKUP_S3_SECRET_KEY:
+        description: Repo-level object-storage secret key for the sealed-pair PUT
         required: true
 permissions:
   contents: read
