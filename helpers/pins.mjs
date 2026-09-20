@@ -42,6 +42,8 @@ function walk(directory) {
 }
 const workflows = walk('.github').filter(file => /\.ya?ml$/.test(file));
 assert.ok(workflows.some(file => file.includes('/workflows/')), 'no workflows to check');
+const komizoActions = 'nicodes/komizo-actions';
+const komizoUses = [];
 for (const file of workflows) {
   const document = Bun.YAML.parse(fs.readFileSync(file, 'utf8'));
   function inspect(value) {
@@ -54,10 +56,34 @@ for (const file of workflows) {
     }
     if (typeof value.uses === 'string' && !value.uses.startsWith('./')) {
       assert.match(value.uses, /^[\w.-]+\/[\w./-]+@[a-f0-9]{40}$/, `${file}: action must use a full commit SHA: ${value.uses}`);
+      if (value.uses.startsWith(`${komizoActions}/`)) komizoUses.push({ file, uses: value.uses });
     }
     Object.values(value).forEach(inspect);
   }
   inspect(document);
+}
+// Shared komizo-actions references follow one fleet-wide pin record so two
+// products can never run different revisions of the same shared action. The
+// record is copied verbatim across products; only peeled commit SHAs are
+// recorded (never annotated tag-object SHAs, which also match the 40-hex rule).
+const pinRecord = 'scripts/engineering/ACTION-PINS.json';
+const pinRecordPath = path.join(snapshotRoot, 'ACTION-PINS.json');
+if (komizoUses.length > 0) {
+  assert.ok(fs.existsSync(pinRecordPath), `${pinRecord} is missing: this product uses ${komizoActions} actions, so it must carry the fleet pin record (bootstrap one with: bun scripts/engineering/helpers/action-pins.mjs)`);
+  const record = JSON.parse(fs.readFileSync(pinRecordPath, 'utf8'));
+  assert.equal(record.repository, `https://github.com/${komizoActions}`, `${pinRecord}: repository must be https://github.com/${komizoActions}`);
+  assert.ok(record.pins && typeof record.pins === 'object' && !Array.isArray(record.pins), `${pinRecord}: a pins map of action -> {tag, sha} is required`);
+  for (const [action, pin] of Object.entries(record.pins)) {
+    assert.match(action, /^[\w.-]+$/, `${pinRecord}: invalid action name '${action}'`);
+    assert.match(typeof pin?.tag === 'string' ? pin.tag : '', /^v\d+\.\d+\.\d+$/, `${pinRecord}: ${action}: tag must be an exact vX.Y.Z release tag`);
+    assert.match(typeof pin?.sha === 'string' ? pin.sha : '', /^[a-f0-9]{40}$/, `${pinRecord}: ${action}: sha must be the full peeled commit SHA of the recorded tag`);
+  }
+  for (const { file, uses } of komizoUses) {
+    const [, action, sha] = /^nicodes\/komizo-actions\/([\w.-]+)@([a-f0-9]{40})$/.exec(uses) ?? [];
+    const pin = record.pins[action];
+    assert.ok(pin, `${file}: ${pinRecord} has no fleet pin for ${komizoActions}/${action}; record the agreed {tag, sha}`);
+    assert.equal(sha, pin.sha, `${file}: ${komizoActions}/${action} is pinned at ${sha} but the fleet record pins ${pin.tag} (${pin.sha}); align the workflow with ${pinRecord} across all products`);
+  }
 }
 for (const file of tracked.filter(file => /(^|[/.])Dockerfile$/.test(file))) {
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {

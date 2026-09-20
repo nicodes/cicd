@@ -21,6 +21,7 @@ file's SHA256. Update the complete snapshot together and run the product's full
   killing and no persisted PID used as shutdown authority.
 - `export-web.py`: clean, bounded Expo export; requires exit0, HTML and JS.
 - `pins.mjs`: exact tool/module/lockfile/image/action references and dependency-update coverage.
+- `action-pins.mjs`: resolve, record, and refresh the fleet komizo-actions pin record.
 - `dependency-coverage.mjs`: require scheduled updates for the app, actions, images
   and every tracked Go module; a newly added module cannot silently lose coverage.
 - `audit.py`: live online dependency audit; any local repair needs reviewed
@@ -307,3 +308,99 @@ byte-identical modulo the slug and the vendored helper path, so the reusable
 workflow invokes the re-landed helper directly instead of the wrapper.
 
 <!-- ws1: reusable-backup end -->
+
+
+<!-- ws5:action-pins begin -->
+## komizo-actions fleet pin record
+
+`pins.mjs` additionally governs every `uses: nicodes/komizo-actions/<action>@…`
+reference found while walking `.github/**/*.yml` (workflow and composite action
+files alike). A product that uses a komizo-actions action must carry
+`scripts/engineering/ACTION-PINS.json` next to `SOURCE.json`, and every
+workflow reference must equal the recorded SHA for that action. The record is
+one file copied verbatim across products, so two products can never run
+different revisions of the same shared action; different actions may sit at
+different recorded revisions. The record is product-owned and deliberately
+outside `SOURCE.json`'s vendored-file hashes: it changes in fleet waves, not
+with helper snapshots.
+
+```json
+{
+  "repository": "https://github.com/nicodes/komizo-actions",
+  "pins": {
+    "connect": {
+      "tag": "v0.0.10",
+      "sha": "3969f9541f731a50bb6efce14d318a02d6ec5c99"
+    },
+    "deploy": {
+      "tag": "v0.0.10",
+      "sha": "3969f9541f731a50bb6efce14d318a02d6ec5c99"
+    },
+    "publish-config": {
+      "tag": "v0.0.10",
+      "sha": "3969f9541f731a50bb6efce14d318a02d6ec5c99"
+    },
+    "run-task": {
+      "tag": "v0.0.10",
+      "sha": "3969f9541f731a50bb6efce14d318a02d6ec5c99"
+    }
+  }
+}
+```
+
+Records store **peeled commit SHAs only**. Every komizo-actions tag is
+annotated: `git ls-remote` reports the tag object and a `^{}` peeled commit,
+and a tag-object SHA — though it matches the 40-hex rule — never belongs in a
+record or a workflow. `action-pins.mjs` is the only supported writer of the
+record; it is also the one helper that touches the network (`git ls-remote`
+against the public repository), while the `pins.mjs` guard stays deterministic
+and network-free. Run it from a product root:
+
+```sh
+bun scripts/engineering/helpers/action-pins.mjs --check              # staleness gate: nonzero on any drift
+bun scripts/engineering/helpers/action-pins.mjs                      # refresh recorded SHAs from live tags (bootstraps a missing record)
+bun scripts/engineering/helpers/action-pins.mjs --latest             # move every recorded action to the newest release
+bun scripts/engineering/helpers/action-pins.mjs --latest --update    # … and rewrite workflow refs and version comments
+bun scripts/engineering/helpers/action-pins.mjs --accept-moved-tags  # only after reviewing a tag that moved or vanished upstream
+```
+
+`--check` compares the record against the live tags and every workflow
+reference against the record, so product CI can wire staleness detection
+without the guard itself going online. A recorded tag that resolves to a
+different commit than recorded — or that no longer exists — is treated as
+upstream tampering: writes refuse without `--accept-moved-tags`.
+
+The guard refuses, with the action, the found SHA, and the expected tag+SHA:
+a komizo-actions reference whose SHA differs from the record; a used action
+missing from the record; a used action with no record file at all; a record
+with a malformed schema; and — via the pre-existing full-commit-SHA rule — any
+literal tag or branch reference.
+
+Fleet migration order: this change lands in cicd first; products then re-vendor
+`scripts/engineering` (a new `SOURCE.json` snapshot wave, since the `pins.mjs`
+bytes change); each product adopts the fleet record in its own follow-up PR by
+copying the agreed `ACTION-PINS.json` verbatim (or bootstrapping with the
+updater) and aligning its workflows with `--update` before running its full
+`make check`.
+
+Authoritative tag table, resolved live with
+`git ls-remote https://github.com/nicodes/komizo-actions 'refs/tags/*'`
+(all tags annotated; workflow and record pins use the commit column):
+
+| Tag | Tag object | Release commit |
+|---|---|---|
+| v0.0.1 | `29cdb643332704ce93749e4ebb3a29d1278a7566` | `ab3ebcd80a45ed86883c38a3c2a73bccaa4f211e` |
+| v0.0.2 | `84a7940697a1262328453c301080178d0fdb8aee` | `58b5930cf3bbc3ad378cd90c817f81fc4616e5f3` |
+| v0.0.3 | `cff4d4a8d32478f5bd70157baaa95e13308c39fe` | `dd77ee8778d82ce25ee9e8273debffd5b92e4f1c` |
+| v0.0.4 | `c17dc3b8549635860adc19644b6f842d6c042ef1` | `4e7842cfd524ea76fc710faef3325a68a7a9dc69` |
+| v0.0.5 | `d5f90e46534c18cf5c55351c868afdd73f830dd9` | `645d3f24de690af8235ef284b70e8b108a2f348f` |
+| v0.0.6 | absent upstream (deleted) | — |
+| v0.0.7 | `701587bb40e40e57b0c68c00e1268cb14474c9c7` | `b0b1e175e513ba8d4da91cd4b5deca2d93b18da0` |
+| v0.0.8 | `a4771a4b10cee3c4209039af635671233630ee89` | `1c698467831e1351854130af19b1a1f4e10f50bc` |
+| v0.0.9 | `d431f65efa3c876676c1e9e35eb891db20f8f884` | `a019cc62fcaf12421c69ee738f990459795c915a` |
+| v0.0.10 | `b455240ddd13769d461f338aee9d98ddd80b0469` | `3969f9541f731a50bb6efce14d318a02d6ec5c99` |
+
+The v0.0.6 deletion is recorded as a tag-mutability precedent: komizo-actions
+tag names are not immutable references, which is exactly why fleet pins are
+commit SHAs governed by this record.
+<!-- ws5:action-pins end -->
