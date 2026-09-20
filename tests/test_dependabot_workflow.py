@@ -71,8 +71,16 @@ class DependabotReusableWorkflow(unittest.TestCase):
         self.steps = {step['name']: step for step in self.job['steps']}
 
     def test_trigger_is_workflow_call_only(self):
-        self.assertEqual(self.doc['on'], {'workflow_call': None},
+        self.assertEqual(list(self.doc['on']), ['workflow_call'],
                          'event triggers belong to the thin caller file')
+    def test_dispatch_target_is_the_only_input_and_is_optional(self):
+        inputs = self.doc['on']['workflow_call']['inputs']
+        self.assertEqual(list(inputs), ['dispatch-target'])
+        target = inputs['dispatch-target']
+        self.assertEqual(target['type'], 'string')
+        self.assertIs(target['required'], False,
+                      'existing callers with no with: block must stay valid')
+        self.assertEqual(target['default'].strip("'"), '')
 
     def test_permissions_match_the_fleet_contract(self):
         self.assertEqual(self.doc['permissions'], {'contents': 'write', 'pull-requests': 'write',
@@ -110,7 +118,8 @@ class DependabotReusableWorkflow(unittest.TestCase):
         self.assertEqual(merge['run'], 'python3 scripts/engineering/helpers/merge-checked.py')
         self.assertEqual(merge['env'], {'GH_TOKEN': '${{ github.token }}',
                                         'PR_NUMBER': '${{ github.event.pull_request.number }}',
-                                        'EXPECTED_HEAD': '${{ github.event.pull_request.head.sha }}'})
+                                        'EXPECTED_HEAD': '${{ github.event.pull_request.head.sha }}',
+                                        'DISPATCH_TARGET': '${{ inputs.dispatch-target }}'})
 
     def test_concurrency_stays_in_the_caller(self):
         self.assertNotIn('concurrency', self.doc,
@@ -130,6 +139,7 @@ class DependabotReusableWorkflow(unittest.TestCase):
                          'group: dependabot-${{ github.event.pull_request.number }}',
                          'cancel-in-progress: true',
                          'uses: nicodes/cicd/.github/workflows/dependabot.yml@',
+                         'dispatch-target: ci.yml',
                          'dependency-policy.py', 'merge-checked.py',
                          'scripts/engineering/helpers/']:
             self.assertIn(fragment, readme)

@@ -228,6 +228,26 @@ Security properties preserved from the per-repo form:
    `eligible=true`, and `merge-checked.py` pins, verifies and merges the exact
    reviewed head SHA after every check passed.
 
+Merged-main coverage: `GITHUB_TOKEN` merges suppress push events, so after
+every merge the gate dispatches the merged gate workflow explicitly. The
+reusable workflow takes one optional input, `dispatch-target` — the caller's
+merged-main workflow filename. Web/Vercel repositories whose only gate is
+`ci.yml` pass:
+
+```yaml
+    uses: nicodes/cicd/.github/workflows/dependabot.yml@<full SHA of the reviewed cicd revision>
+    with:
+      dispatch-target: ci.yml
+```
+
+Repositories with `cd.yml` need nothing: without the input the gate dispatches
+the first existing candidate from `cd.yml` then `ci.yml`, and a repository with
+neither filename fails loudly after the merge instead of silently losing
+merged-main coverage. Existing callers with no `with:` block are unchanged.
+Independently of the dispatch target, `merge-checked.py` only runs for
+repositories in the three portfolio orgs (`nicodes`, `aviorstudio`,
+`astrylogical`); every other repository identity is rejected before any merge.
+
 Fleet status: `nicodes/cazper-be`, `nicodes/ctcalc-be`, `nicodes/komizo-be`,
 `nicodes/ormos-be`, `nicodes/tonesplit-be`, `aviorstudio/gdam-be`,
 `aviorstudio/termcade-be` and `astrylogical/astry-be` carry the per-repo

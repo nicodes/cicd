@@ -54,10 +54,35 @@ def decision(checks, statuses, head, self_prefix, required=('Test', 'Build')):
             and all(s.get('state') == 'success' for s in latest.values()))
 
 
+def check_identity(repo, pr, head, run):
+    # The merge automation may run only for the three portfolio orgs (docs/ACTIVE-PROJECTS.md).
+    if not re.fullmatch(r'(?:nicodes|aviorstudio|astrylogical)/[a-z0-9-]+', repo) or not pr.isdigit() or not run.isdigit() or not re.fullmatch(r'[a-f0-9]{40}', head):
+        raise ValueError('invalid merge identity')
+
+
+def dispatch_candidates(target):
+    if target and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml', target):
+        raise ValueError('invalid dispatch target')
+    return ([target] if target else []) + ['cd.yml', 'ci.yml']
+
+
+def dispatch(repo, candidates):
+    for workflow in candidates:
+        try:
+            api(f'repos/{repo}/actions/workflows/{workflow}')
+        except subprocess.CalledProcessError as error:
+            if error.stderr and '404' in error.stderr:
+                continue
+            raise
+        api(f'repos/{repo}/actions/workflows/{workflow}/dispatches', 'POST', {'ref': 'main'})
+        return workflow
+    raise ValueError('no dispatchable workflow for merged main; coverage would be silently dropped')
+
+
 def main():
     repo, pr, head, run = [os.environ[key] for key in ['GITHUB_REPOSITORY', 'PR_NUMBER', 'EXPECTED_HEAD', 'GITHUB_RUN_ID']]
-    if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo) or not pr.isdigit() or not run.isdigit() or not re.fullmatch(r'[a-f0-9]{40}', head):
-        raise ValueError('invalid merge identity')
+    check_identity(repo, pr, head, run)
+    candidates = dispatch_candidates(os.environ.get('DISPATCH_TARGET', ''))
     prefix = f'https://github.com/{repo}/actions/runs/{run}/'
     def pull():
         value = api(f'repos/{repo}/pulls/{pr}')
@@ -79,9 +104,8 @@ def main():
             merged = result['sha']
             if api(f'repos/{repo}/git/ref/heads/main')['object']['sha'] != merged:
                 raise ValueError('main moved before workflow dispatch; review the newer main run')
-            workflow = 'ci.yml' if repo.endswith('/petalboard-be') else 'cd.yml'
-            # GITHUB_TOKEN merges suppress push events. Dispatch the full merged gate explicitly.
-            api(f'repos/{repo}/actions/workflows/{workflow}/dispatches', 'POST', {'ref': 'main'})
+            # GITHUB_TOKEN merges suppress push events. Dispatch the first existing merged gate.
+            workflow = dispatch(repo, candidates)
             print(f'Merged checked head {head}; dispatched {workflow} for merged main {merged}')
             return
         print('Waiting for the complete Test and Build gate', flush=True)
