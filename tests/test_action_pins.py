@@ -24,7 +24,7 @@ LS_REMOTE = ''.join(f'{tag}\trefs/tags/{name}\n{commit}\trefs/tags/{name}^{{}}\n
                                               ('v0.0.10', V10_TAG, V10)])
 
 
-def write_product(root, steps=(), composite=None, record=None):
+def write_product(root, steps=(), composite=None, record=None, applications=('app',)):
     """Build the smallest product tree that passes every other pins.mjs check."""
     engineering = root / 'scripts/engineering'
     (engineering / 'helpers').mkdir(parents=True)
@@ -34,9 +34,11 @@ def write_product(root, steps=(), composite=None, record=None):
               'files': {'helpers/pins.mjs': hashlib.sha256(helper.read_bytes()).hexdigest()}}
     (engineering / 'SOURCE.json').write_text(json.dumps(source, indent=2) + '\n')
     (root / '.mise.toml').write_text('[tools]\nbun = "1.4.1"\n')
-    (root / 'app').mkdir()
-    (root / 'app/package.json').write_text('{"packageManager": "bun@1.4.1"}')
-    (root / 'app/bun.lock').write_text('')
+    for name in applications:
+        directory = root / name
+        directory.mkdir(parents=True)
+        (directory / 'package.json').write_text('{"packageManager": "bun@1.4.1"}')
+        (directory / 'bun.lock').write_text('')
     workflows = root / '.github/workflows'
     workflows.mkdir(parents=True)
     (workflows / 'bun-updates.yml').write_text(
@@ -61,6 +63,10 @@ def write_product(root, steps=(), composite=None, record=None):
     if record is not None:
         (engineering / 'ACTION-PINS.json').write_text(json.dumps(record, indent=2) + '\n')
     subprocess.run(['git', 'init', '-q'], cwd=root, check=True, timeout=60)
+    subprocess.run(['git', 'add', '-A'], cwd=root, check=True, timeout=60)
+
+
+def stage(root):
     subprocess.run(['git', 'add', '-A'], cwd=root, check=True, timeout=60)
 
 
@@ -201,6 +207,81 @@ class ActionPinGuard(unittest.TestCase):
                                        'docker/login-action@'+V1])
             result = run_pins(root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class ApplicationManifestScan(unittest.TestCase):
+    """The per-application rules follow every tracked top-level `*/package.json`
+    directory — `app/` is convention, not requirement — and a repository with no
+    Bun application at all (a Godot/game repo) has nothing to check in that loop
+    while the mise exact-version and workflow/action-pins rules still apply."""
+
+    def test_app_directory_repo_passes_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT])
+            result = run_pins(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_non_app_manifest_directory_passes(self):
+        # aviorstudio/fieldsofrevik tracks no `app/`; its Bun app is `playwright/`.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=('playwright',))
+            result = run_pins(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_every_tracked_manifest_is_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=('app', 'playwright'))
+            (root / 'playwright/package.json').write_text('{"packageManager": "bun@1.3.9"}')
+            stage(root)
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('playwright: Bun pin differs', result.stdout + result.stderr)
+
+    def test_manifestless_repo_passes_with_other_pins_still_enforced(self):
+        # Pure Godot/game shape: no package.json anywhere, so the applications
+        # loop is skipped — but mise and workflow pins keep failing loudly.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=())
+            result = run_pins(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=['actions/checkout@v4'], applications=())
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('full commit SHA', result.stdout + result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=())
+            (root / '.mise.toml').write_text('[tools]\nbun = "1"\n')
+            stage(root)
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('not an exact version', result.stdout + result.stderr)
+
+    def test_missing_lockfile_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=('playwright',))
+            (root / 'playwright/bun.lock').unlink()
+            stage(root)
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('playwright: commit bun.lock', result.stdout + result.stderr)
+
+    def test_competing_lockfile_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=('playwright',))
+            (root / 'playwright/package-lock.json').write_text('{}')
+            stage(root)
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('playwright: remove the competing package-lock.json', result.stdout + result.stderr)
 
 
 class ActionPinUpdater(unittest.TestCase):
