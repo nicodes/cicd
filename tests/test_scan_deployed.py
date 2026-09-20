@@ -1,4 +1,5 @@
 import importlib.util
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -54,6 +55,56 @@ class DeployedRevision(unittest.TestCase):
     def test_unknown_product_is_rejected_by_the_allowlist(self):
         with self.assertRaises(KeyError):
             scanner.product_images('unknown', 'nicodes/unknown-be', 'a'*40)
+
+
+class RepositoryBinding(unittest.TestCase):
+    """The main-block binding compares full owner/name slugs: PRODUCTS rows
+    carry the bare repository name, and GITHUB_REPOSITORY is the slug of the
+    repository running the workflow. Regression: comparing the slug to the
+    bare name failed every Actions run regardless of the caller's repository.
+    """
+
+    def test_matching_runtime_repository_passes_without_an_override(self):
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'aviorstudio/termcade-be'}):
+            self.assertEqual(scanner.bound_repository('termcade'), 'aviorstudio/termcade-be')
+
+    def test_wrong_repository_without_override_raises_the_binding_error(self):
+        for repository in ['aviorstudio/termcade', 'aviorstudio/termcade-games',
+                           'nicodes/termcade-be', 'termcade-be']:
+            with self.subTest(repository=repository), \
+                    patch.dict(os.environ, {'GITHUB_REPOSITORY': repository}), \
+                    self.assertRaises(ValueError) as raised:
+                scanner.bound_repository('termcade')
+            self.assertEqual(str(raised.exception), 'repository does not match the declared product')
+
+    def test_override_replaces_the_runtime_repository_for_the_binding(self):
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'aviorstudio/termcade'}):
+            self.assertEqual(scanner.bound_repository('termcade', 'aviorstudio/termcade-be'),
+                             'aviorstudio/termcade-be')
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'aviorstudio/termcade-be'}), \
+                self.assertRaises(ValueError):
+            scanner.bound_repository('termcade', 'aviorstudio/termcade-games')
+
+    def test_malformed_overrides_are_rejected_before_any_lookup(self):
+        for override in ['termcade-be', 'aviorstudio', 'a/b/c', '../termcade-be',
+                         'aviorstudio/termcade-be; rm -rf /', 'aviorstudio/term cade-be',
+                         'aviorstudio/termcade-be\n']:
+            with self.subTest(override=override), self.assertRaises(ValueError) as raised:
+                scanner.bound_repository('termcade', override)
+            self.assertEqual(str(raised.exception), 'repository override must be an owner/name slug')
+
+    def test_default_path_is_unchanged_without_an_override(self):
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'astrylogical/astry-be'}):
+            self.assertEqual(scanner.bound_repository('astry', ''), 'astrylogical/astry-be')
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(scanner.bound_repository('astry'), 'astrylogical/astry-be')
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'aviorstudio/astry-be'}, clear=True), \
+                self.assertRaises(ValueError):
+            scanner.bound_repository('astry', '')
+
+    def test_unknown_product_is_rejected_by_the_allowlist(self):
+        with self.assertRaises(KeyError):
+            scanner.bound_repository('unknown', 'aviorstudio/unknown-be')
 
 
 if __name__ == '__main__':

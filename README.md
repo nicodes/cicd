@@ -116,9 +116,19 @@ called job, because a called workflow can only restrict, never elevate, a grant:
 
 `project` is required and is passed to the caller's own vendored
 `scripts/engineering/helpers/scan-deployed.py`; that path stays the contract.
-`source-scan-command` is the one optional knob: it runs in the caller's
-checkout with the caller's mise toolchain active, and an empty value (the
-default) skips the source-scan step. Failure reporting runs cicd's own
+`repository` is optional and almost always left empty: the deployed-image scan
+binds itself to the runtime repository (`GITHUB_REPOSITORY`, the caller's own
+repo in a called workflow) and refuses to run when it differs from the
+product's declared deployed-image source repository. Pass `repository` only
+when the caller workflow lives in a differently-named repository than the
+declared one — the value must still equal the declared `owner/repo`, so the
+PRODUCTS row remains the only authority on which deployments and images get
+scanned; the input only widens which repository may launch the scan. The flag
+is threaded unconditionally, so a caller must vendor a scan-deployed.py new
+enough to accept `--repository`. `source-scan-command` is the other optional
+knob: it runs in the caller's checkout with the caller's mise toolchain
+active, and an empty value (the default) skips the source-scan step. Failure
+reporting runs cicd's own
 `helpers/report-failure.py` (checked out from the pinned cicd revision inside
 the reusable workflow), so these two workflows no longer depend on the
 caller's vendored `report-failure.py`; other workflows keep using it.

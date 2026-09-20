@@ -13,6 +13,14 @@ on:
         description: Product slug passed to the caller's vendored scan-deployed.py
         required: true
         type: string
+      repository:
+        description: >-
+          owner/repo bound to the deployed-image scan; empty (the default)
+          binds the caller's own repository. Pass the declared product
+          repository only when the caller lives in a differently-named repo.
+        required: false
+        type: string
+        default: ''
       source-scan-command:
         description: Command that scans the caller's source modules; empty skips the step
         required: false
@@ -49,7 +57,8 @@ jobs:
         timeout-minutes: 45
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/engineering/helpers/scan-deployed.py --project ${{ inputs.project }}
+          SCAN_DEPLOYED_REPOSITORY: ${{ inputs.repository }}
+        run: python3 scripts/engineering/helpers/scan-deployed.py --project ${{ inputs.project }} --repository "$SCAN_DEPLOYED_REPOSITORY"
   report:
     name: Report failure
     needs:
