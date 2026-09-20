@@ -50,7 +50,10 @@ class VulnerabilityScanWorkflowTests(unittest.TestCase):
         inputs = self.document['on']['workflow_call']['inputs']
         self.assertEqual(inputs['project']['type'], 'string')
         self.assertTrue(inputs['project']['required'])
-        self.assertEqual(set(inputs), {'project', 'source-scan-command'})
+        self.assertEqual(set(inputs), {'project', 'repository', 'source-scan-command'})
+        self.assertEqual(inputs['repository']['type'], 'string')
+        self.assertFalse(inputs['repository']['required'])
+        self.assertEqual(inputs['repository']['default'], '')
         self.assertEqual(inputs['source-scan-command']['type'], 'string')
         self.assertFalse(inputs['source-scan-command']['required'])
         self.assertEqual(inputs['source-scan-command']['default'], '')
@@ -65,8 +68,10 @@ class VulnerabilityScanWorkflowTests(unittest.TestCase):
         deployed = next(step for step in self.scan['steps'] if 'run' in step
                         and 'scan-deployed.py' in step['run'])
         self.assertEqual(deployed['run'],
-                         'python3 scripts/engineering/helpers/scan-deployed.py --project ${{ inputs.project }}')
-        self.assertEqual(deployed['env'], {'GH_TOKEN': '${{ github.token }}'})
+                         'python3 scripts/engineering/helpers/scan-deployed.py --project ${{ inputs.project }}'
+                         ' --repository "$SCAN_DEPLOYED_REPOSITORY"')
+        self.assertEqual(deployed['env'], {'GH_TOKEN': '${{ github.token }}',
+                                           'SCAN_DEPLOYED_REPOSITORY': '${{ inputs.repository }}'})
 
     def test_optional_source_scan_step_skips_when_no_command_is_given(self):
         source = next(step for step in self.scan['steps'] if step.get('name') == 'Scan every source module')

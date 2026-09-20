@@ -35,6 +35,25 @@ def product_images(project, repository, revision):
     return [f'ghcr.io/{owner}/{project}-{component}:{revision}' for component in components]
 
 
+def bound_repository(project, override=''):
+    """Resolve the runtime repository and bind it to the declared product.
+
+    The binding compares full owner/name slugs: PRODUCTS rows carry the bare
+    repository name, so the declared slug is rebuilt here. The optional
+    override replaces GITHUB_REPOSITORY for callers whose own repository is
+    named differently from the deployed-image source repository; it must still
+    equal the declared slug, so the row remains the only authority on which
+    repository's deployments and images are scanned.
+    """
+    if override and not re.fullmatch(r'[\w-]+(?:\.[\w-]+)*/[\w-]+(?:\.[\w-]+)*', override):
+        raise ValueError('repository override must be an owner/name slug')
+    owner, name, _components = PRODUCTS[project]
+    detected = override or os.environ.get('GITHUB_REPOSITORY', f'{owner}/{name}')
+    if detected != f'{owner}/{name}':
+        raise ValueError('repository does not match the declared product')
+    return detected
+
+
 def api(path):
     return json.loads(subprocess.check_output(['gh', 'api', path], text=True, timeout=30))
 
@@ -75,18 +94,19 @@ def deployed_revisions(repository):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', required=True, choices=list(PRODUCTS))
+    parser.add_argument('--repository', default='',
+                        help="owner/repo launching the scan; overrides GITHUB_REPOSITORY "
+                             "for the product binding and must still equal the declared "
+                             "product's repository")
     args = parser.parse_args()
-    owner, repository, components = PRODUCTS[args.project]
-    detected = os.environ.get('GITHUB_REPOSITORY', repository)
-    if detected != repository:
-        raise ValueError('repository does not match the declared product')
+    detected = bound_repository(args.project, args.repository)
     revisions = deployed_revisions(detected)
     spec = importlib.util.spec_from_file_location('scan_image', Path(__file__).with_name('scan-image.py'))
     scanner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(scanner)
     results, failures = [], []
     for revision in revisions:
-        for image in product_images(args.project, repository, revision):
+        for image in product_images(args.project, detected, revision):
             try:
                 subprocess.run(['docker', 'pull', image], check=True, timeout=300)
                 results.append(scanner.scan(image))
