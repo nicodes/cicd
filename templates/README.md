@@ -12,6 +12,26 @@ PocketBase are both supported. `app-only` uses `app/`, `deploy/` and `docs/` and
 no API or database scaffold. Its Go tooling builds and scans Caddy, not a new
 backend service. Extend exact tool pins when a product needs additional tools.
 
+`static-web` is the static site envelope (Astro on bun in the current adopters,
+hosted by Vercel, which deploys from its own build). Copy `ci.yml` into
+`.github/workflows/ci.yml`, `dependabot.yml` into `.github/dependabot.yml`,
+`.mise.toml` and `.gitignore` into the root, and `actions/build/action.yml` and
+`actions/test/action.yml` into `.github/actions/` — the workflow's jobs call
+these repo-local composite actions, so they are part of the archetype, not
+optional extras. This archetype omits the `Makefile` and `bun-updates.yml` on
+purpose: none of the three adopting repositories has either. Their entire gate
+is the two composite actions, and a second entry point would only drift from
+it; the bun pin lives in `.mise.toml` and moves with the product.
+
+`ci.yml` and `actions/build/action.yml` are admitted copies, identical across
+adopters. `actions/test/action.yml` is the per-repo override point: the
+archetype ships the two common assertions (the build wrote `dist/index.html`;
+no JavaScript was emitted) and the product adds its own assertions — routes
+that must exist, content that must be present — as further steps in that file.
+The push trigger on `ci.yml` is load-bearing here: there is no CD, and the
+host's build never runs the assertions, so this workflow is the only thing
+that gates a merge to main.
+
 Vendor `helpers/` and `tests/` with the full source revision and SHA-256 inventory
 in `scripts/engineering/SOURCE.json`, as described in the parent README. Keep the
 normative policy in the September workspace plan. Use these product-owned scripts:
@@ -46,3 +66,5 @@ Concrete implementations: `nicodes/ormos-be`, `nicodes/cazper-be` and
 `nicodes/komizo-be` for full-stack; `nicodes/ctcalc-be`, `nicodes/tonesplit-be` and
 `nicodes/petalboard-be` for app-only. Their `SOURCE.json` records the exact shared
 release; their integration tickets track final adoption and rollout evidence.
+Static-web: `aviorstudio/aviorstudio-web`, `nicodes/tonesplit-web` and
+`nicodes/ctcalc-web`.

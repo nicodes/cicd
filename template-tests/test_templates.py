@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -44,3 +45,98 @@ class TemplateGate(unittest.TestCase):
                 state.write_text('local development state')
                 self.assertEqual(make('clean').returncode, 0)
                 self.assertTrue(state.exists())
+
+
+def composite_run_scripts(text):
+    """Extract the `run:` bodies of a composite action, in order.
+
+    Minimal block-scalar handling so the template's assertions execute
+    without a YAML dependency: `run: <line>` yields one script, `run: |`
+    yields the following more-indented lines with their common indent
+    stripped.
+    """
+    scripts = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        index += 1
+        if stripped in ('run:', 'run: |'):
+            indent = len(line) - len(line.lstrip())
+            body = []
+            while index < len(lines):
+                candidate = lines[index]
+                if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= indent:
+                    break
+                body.append(candidate)
+                index += 1
+            indents = [len(b) - len(b.lstrip()) for b in body if b.strip()]
+            common = min(indents)
+            scripts.append('\n'.join(b[common:] for b in body).strip('\n'))
+        elif stripped.startswith('run: '):
+            scripts.append(stripped[len('run: '):])
+    return scripts
+
+
+class StaticWebTemplateGate(unittest.TestCase):
+    """The static-web archetype has no Makefile; its gate is the pair of
+    composite actions ci.yml calls. The test action is exercised end to end:
+    its steps must fail closed on every broken shape of ./dist and pass only
+    a complete one."""
+
+    def setUp(self):
+        self.template = Path(__file__).parents[1] / 'templates' / 'static-web'
+
+    def run_test_action(self, files):
+        action = self.template / 'actions' / 'test' / 'action.yml'
+        scripts = composite_run_scripts(action.read_text())
+        self.assertGreaterEqual(len(scripts), 2, 'common assertions must ship with the archetype')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, content in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            for script in scripts:
+                # Composite bash steps run with errexit and pipefail.
+                result = subprocess.run(['bash', '-eo', 'pipefail', '-c', script], cwd=root,
+                                        capture_output=True, text=True, timeout=20)
+                if result.returncode != 0:
+                    return result
+        return result
+
+    def test_missing_dist_fails(self):
+        self.assertNotEqual(self.run_test_action({}).returncode, 0)
+
+    def test_empty_index_fails(self):
+        self.assertNotEqual(self.run_test_action({'dist/index.html': ''}).returncode, 0)
+
+    def test_shipped_javascript_fails(self):
+        result = self.run_test_action({'dist/index.html': '<html></html>',
+                                       'dist/assets/app.js': 'console.log(1)'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('JavaScript', result.stderr + result.stdout)
+
+    def test_complete_dist_passes(self):
+        result = self.run_test_action({'dist/index.html': '<html></html>',
+                                       'dist/assets/site.css': 'body{}'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_ci_workflow_is_two_independent_jobs_building_before_testing(self):
+        ci = (self.template / 'ci.yml').read_text()
+        self.assertNotIn('needs:', ci, 'Build and Test stay independent')
+        self.assertEqual(ci.count('\n    name: Build\n'), 1, 'exactly one Build job')
+        self.assertEqual(ci.count('\n    name: Test\n'), 1, 'exactly one Test job')
+        self.assertEqual(ci.count('- name: Build'), 2, 'each job builds in its own workspace')
+        self.assertEqual(ci.count('uses: ./.github/actions/build'), 2)
+        self.assertEqual(ci.count('uses: ./.github/actions/test'), 1)
+        test_job = ci[ci.index('\n  test:'):]
+        self.assertLess(test_job.index('uses: ./.github/actions/build'),
+                        test_job.index('uses: ./.github/actions/test'),
+                        'Test asserts on ./dist, so it builds first in its own workspace')
+        for uses in re.findall(r'uses: ([^\s#]+)', ci):
+            if uses.startswith('./'):
+                continue
+            self.assertRegex(uses.split('@', 1)[1], r'^[0-9a-f]{40}$',
+                             f'{uses} must be pinned by full commit SHA')
