@@ -89,6 +89,11 @@ checkout, mise, ghcr.io login, source scan, deployed-image scan and failure
 reporting — comes from this repository:
 
 ```yaml
+permissions:
+  contents: read
+  packages: read
+  deployments: read
+  issues: write
 jobs:
   scan:
     uses: nicodes/cicd/.github/workflows/vuln.yml@<full-40-hex-cicd-commit>
@@ -96,6 +101,17 @@ jobs:
       project: cazper
       source-scan-command: bun install --cwd app --frozen-lockfile && make vuln
 ```
+
+Caller requirements — the caller's workflow-level `permissions` must cover every
+called job, because a called workflow can only restrict, never elevate, a grant:
+
+- `contents: read` — the scan job's checkout of the caller's source and vendored helpers.
+- `packages: read` — the ghcr.io login that pulls the deployed images.
+- `deployments: read` — `scan-deployed.py` walks the production deployment
+  history for the latest attempt and the last success.
+- `issues: write` — the report-failure job files the owned failure issue;
+  without the grant that job fails at runtime, not at validation
+  (fleet report: aviorstudio/fieldsofrevik#202).
 
 `project` is required and is passed to the caller's own vendored
 `scripts/engineering/helpers/scan-deployed.py`; that path stays the contract.
@@ -112,10 +128,21 @@ The caller keeps `on: schedule` (weekly, own staggered minute) plus
 `workflow_dispatch`, grants `contents: read` and `issues: write`, and calls:
 
 ```yaml
+permissions:
+  contents: read
+  issues: write
 jobs:
   watch:
     uses: nicodes/cicd/.github/workflows/tools.yml@<full-40-hex-cicd-commit>
 ```
+
+Caller requirements:
+
+- `contents: read` — the watch job's checkout of the caller's vendored
+  `watch-tools.py` and the pinned cicd report helper.
+- `issues: write` — the report-failure step files the owned failure issue; a
+  missing grant fails at runtime, not at validation
+  (fleet report: aviorstudio/fieldsofrevik#202).
 
 There are no inputs. The reusable job keeps the fleet's `main`-only guard
 (`if: github.ref == 'refs/heads/main'`, evaluated in the caller's context),
@@ -152,6 +179,62 @@ and issue script and is intentionally not folded into the reusable body.
 the fleet shape and can adopt the reusable tool watch, but the vulnerability
 reusable does not cover their shape.
 <!-- ws2/reusable-vuln-tools: end -->
+
+<!-- ws7/reusable-pin: begin -->
+## Current reusable pin
+
+One full commit SHA of this repository pins all four reusable workflows a
+product calls — `backup.yml`, `vuln.yml`, `tools.yml` and `dependabot.yml`.
+The model mirrors the vendored helpers, where a single `SOURCE.json` revision
+covers the whole `helpers/` snapshot: the reusable set and the helper set each
+land or do not land together.
+
+Policy (manager decision): drift visibility beats flexibility. Per-workflow
+pins — different SHAs for different reusable workflows, or different SHAs per
+product — are refused by convention in review. With a single pin, one
+`git ls-remote` shows whether a product is behind, and no product can run a
+workflow revision whose helpers it has not vendored.
+
+The current pin is the latest commit on `main` that touches `.github/workflows/`
+or `helpers/` — in practice `main`'s HEAD, because landing PRs here almost
+always touch one of the two. Adopters resolve it without cloning:
+
+```sh
+git ls-remote https://github.com/nicodes/cicd HEAD
+```
+
+Verify that the resolved SHA contains the full workflow set before pointing a
+caller at it (all four files must exist at that revision):
+
+```sh
+git fetch --depth=1 https://github.com/nicodes/cicd <sha>
+git cat-file -e FETCH_HEAD:.github/workflows/vuln.yml
+git cat-file -e FETCH_HEAD:.github/workflows/tools.yml
+git cat-file -e FETCH_HEAD:.github/workflows/backup.yml
+git cat-file -e FETCH_HEAD:.github/workflows/dependabot.yml
+```
+
+Bump procedure for a product — one PR, both halves together:
+
+1. Resolve the current pin as above and verify the workflow set at that SHA.
+2. Point every `uses: nicodes/cicd/.github/workflows/<workflow>.yml@…`
+   reference in the product at that SHA.
+3. Re-vendor `scripts/engineering/` from the same SHA — helpers, tests and a
+   refreshed `SOURCE.json` — in the same PR, then run the product's full
+   `make check`. The reusable bodies and the vendored helpers they call must
+   never sit at different revisions.
+
+Expected re-vendor delta at this revision — the SHA256 each governed helper
+must carry in a product's snapshot after moving to this pin:
+
+| Helper | SHA256 |
+|---|---|
+| `pins.mjs` | `258aa6e956073233527a41df9d03f8efc59ff1d0b3d1b573571b0ede86d8143a` |
+| `merge-checked.py` | `b86a1e741697e3f0034da2d3b7decc9af06a0d9e0f23cbd2d001dc90bd4c530e` |
+| `upload-backup.py` | `db56696bf8906daa3469e82c0be30b3ca50dff4057634ecfdc6e6ae32377e18a` |
+| `vendor-snapshot.py` | `fcecb4b627cbbf8e91c3e48fa02e0b8e3329fde10e916a5a2e5d6c68cada1027` |
+| `scan-deployed.py` | `7078fd4b5f96adeca51e0544263059bd1054e450193235795daa9a3027815b68` |
+<!-- ws7/reusable-pin: end -->
 
 ## Bun update compatibility and issue-only decision
 
@@ -198,6 +281,19 @@ jobs:
   auto-merge:
     uses: nicodes/cicd/.github/workflows/dependabot.yml@<full SHA of the reviewed cicd revision>
 ```
+
+Caller requirements — the caller's workflow-level `permissions` must cover
+every called step (the block above is the minimum, and each scope is load
+bearing):
+
+- `contents: write` — the merge step lands the reviewed update.
+- `pull-requests: write` — the gate reads and merges the Dependabot pull
+  request itself.
+- `actions: write` — after the merge, the gate dispatches the merged-main
+  workflow, because `GITHUB_TOKEN` merges do not emit push events.
+- `checks: read` and `statuses: read` — `merge-checked.py` verifies Test,
+  Build and every other reported check and status on the exact head SHA
+  before merging.
 
 Inside the called workflow the `github` context, `github.token` and the caller's
 event payload all resolve in the caller's repository, so the gate steps are the
@@ -279,6 +375,7 @@ name: Backup
   workflow_dispatch: null
 permissions:
   contents: read
+  issues: write
 jobs:
   backup:
     name: Backup
@@ -290,6 +387,23 @@ jobs:
       user: komizo-cazper              # SSH deploy user
     secrets: inherit
 ```
+
+Caller requirements:
+
+- `production` environment — the reusable job's `environment: production`
+  resolves in the caller's repository and carries its deployment protections.
+- `secrets: inherit` — the only channel the called workflow has to the
+  caller's secrets; nothing is passed without it.
+- `KOMIZO_DEPLOY_KEY` secret, `KOMIZO_SERVER_URL` (or the server var the
+  caller passes) and `KOMIZO_KNOWN_HOSTS` — the verified-snapshot SSH
+  connection.
+- `BACKUP_S3_HOSTNAME` and `BACKUP_S3_BUCKET` variables with the
+  `BACKUP_S3_ACCESS_KEY` and `BACKUP_S3_SECRET_KEY` secrets — where the sealed
+  snapshot is stored.
+- Workflow-level `contents: read` plus `issues: write` — the report-failure
+  job files the owned failure issue, and a called workflow cannot elevate a
+  missing grant, so without `issues: write` that job fails at runtime
+  (fleet report: aviorstudio/fieldsofrevik#202).
 
 The caller must keep its `production` environment, its own
 `scripts/export-backup.sh` host-side exporter, and provide (with
