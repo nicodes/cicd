@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -81,3 +82,56 @@ bun = "1.4.1"
             item = {'source': {'path': config}, 'latest': latest}
             with self.assertRaises(ValueError, msg=f'{installed_entry} / {latest}'):
                 watch.updates(root, {'github:owner/tool': installed_entry}, {'github:owner/tool': item})
+
+    def run_main(self, issues):
+        root = Path(self.directory)
+        (root/'.mise.toml').write_text('[tools]\nbun = "1.2.3"\n')
+        os.chdir(root)
+        outdated = {'bun': {'source': {'path': str(root/'.mise.toml')}, 'bump': '1.2.4'}}
+        def check_output(args, **kwargs):
+            if args[0] == 'mise':
+                return json.dumps(outdated)
+            self.assertEqual(args[:3], ['gh', 'issue', 'list'])
+            return json.dumps(issues)
+        calls = []
+        def run(argv, **kwargs):
+            # The body file lives in a TemporaryDirectory main() removes;
+            # capture argv and body while the file still exists.
+            calls.append((list(argv), Path(argv[argv.index('--body-file') + 1]).read_text()))
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'nicodes/cicd'}), \
+             patch.object(watch.subprocess, 'check_output', side_effect=check_output), \
+             patch.object(watch.subprocess, 'run', side_effect=run):
+            watch.main()
+        self.assertEqual(len(calls), 1)
+        return root, calls[0]
+
+    def test_existing_issue_is_edited_with_add_assignee(self):
+        # gh issue edit rejects --assignee (the fleet failure); its additive
+        # --add-assignee keeps nicodes the owner without erroring when already
+        # assigned. gh issue create has no --add-assignee, so only the edit
+        # path uses it. The lowest-numbered open issue owns the report.
+        title = 'Tool maintenance: pinned versions have updates'
+        with tempfile.TemporaryDirectory() as self.directory:
+            cwd = os.getcwd()
+            self.addCleanup(os.chdir, cwd)
+            root, (argv, body) = self.run_main([{'number': 9, 'title': title},
+                                                {'number': 3, 'title': title}])
+            self.assertEqual(argv[:8], ['gh', 'issue', 'edit', '3', '--repo', 'nicodes/cicd',
+                                        '--add-assignee', 'nicodes'])
+            self.assertNotIn('--assignee', argv)
+            self.assertIn('Owner: @nicodes', body)
+            self.assertIn('| `bun` | `1.2.3` | `1.2.4` |', body)
+            self.assertEqual(json.loads((root/'.artifacts/tool-updates.json').read_text()),
+                             [['bun', '1.2.3', '1.2.4']])
+
+    def test_missing_issue_is_created_with_assignee(self):
+        title = 'Tool maintenance: pinned versions have updates'
+        with tempfile.TemporaryDirectory() as self.directory:
+            cwd = os.getcwd()
+            self.addCleanup(os.chdir, cwd)
+            _, (argv, body) = self.run_main([])
+            self.assertEqual(argv[:7], ['gh', 'issue', 'create', '--title', title,
+                                        '--repo', 'nicodes/cicd'])
+            self.assertEqual(argv[7:9], ['--assignee', 'nicodes'])
+            self.assertNotIn('--add-assignee', argv)
+            self.assertIn('Owner: @nicodes', body)
