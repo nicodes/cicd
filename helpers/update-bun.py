@@ -50,10 +50,13 @@ def parse_inventory(output):
 
 def prepare(root):
     tracked = set(run(['git', 'ls-files', '-z'], cwd=root).split('\0'))
+    # Discover the product's own top-level package directories instead of
+    # assuming `app/` — the same `*/package.json` scan pins.mjs uses.
+    # aviorstudio/fieldsofrevik's Bun application lives at `playwright/`.
     applications = sorted({str(Path(name).parent) for name in tracked
                            if name.endswith('/package.json') and name.count('/') == 1})
-    if 'app' not in applications:
-        raise ValueError('The product must declare its app manifest')
+    if not applications:
+        raise ValueError('The product must declare an application manifest')
     inventory, changes = [], {}
     for application in applications:
         rows, files = prepare_application(root, application)
@@ -100,7 +103,9 @@ def prepare_application(root, application):
 
 
 def publish(repo, base, inventory, changes):
-    if not re.fullmatch(r'(?:nicodes/[a-z0-9-]+|aviorstudio/(?:gdam|termcade)-be|astrylogical/astry-be)', repo) or not re.fullmatch(r'[a-f0-9]{40}', base):
+    # The owned issue may be filed only in the three portfolio orgs
+    # (docs/ACTIVE-PROJECTS.md) — the same boundary merge-checked.py enforces.
+    if not re.fullmatch(r'(?:nicodes|aviorstudio|astrylogical)/[a-z0-9-]+', repo) or not re.fullmatch(r'[a-f0-9]{40}', base):
         raise ValueError('Invalid issue target')
     if api(repo, 'git/ref/heads/main')['object']['sha'] != base:
         raise ValueError('Main changed; rerun the update inventory on current main')

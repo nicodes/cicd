@@ -231,7 +231,7 @@ must carry in a product's snapshot after moving to this pin:
 
 | Helper | SHA256 |
 |---|---|
-| `pins.mjs` | `258aa6e956073233527a41df9d03f8efc59ff1d0b3d1b573571b0ede86d8143a` |
+| `pins.mjs` | `7e76a10e9bc3a2e99de341881f2e577e0f1bbc2af4a09e8d69d9b4bba069033c` |
 | `merge-checked.py` | `b86a1e741697e3f0034da2d3b7decc9af06a0d9e0f23cbd2d001dc90bd4c530e` |
 | `upload-backup.py` | `db56696bf8906daa3469e82c0be30b3ca50dff4057634ecfdc6e6ae32377e18a` |
 | `vendor-snapshot.py` | `fcecb4b627cbbf8e91c3e48fa02e0b8e3329fde10e916a5a2e5d6c68cada1027` |
@@ -549,3 +549,100 @@ The v0.0.6 deletion is recorded as a tag-mutability precedent: komizo-actions
 tag names are not immutable references, which is exactly why fleet pins are
 commit SHAs governed by this record.
 <!-- ws5:action-pins end -->
+
+<!-- ws9/fleet-helper-compat: begin -->
+## Fleet compatibility fixes and the deployed.yml handoff contract
+
+### Portfolio-wide helper identity
+
+`report-failure.py`, `watch-tools.py` and `update-bun.py` admitted only a
+hand-listed set of repositories beside `nicodes/*`, so an adopting portfolio
+repository outside that list (fleet evidence: `aviorstudio/fieldsofrevik`)
+could not file its owned issue. All three now use the portfolio-org identity
+boundary `merge-checked.py` established —
+`(?:nicodes|aviorstudio|astrylogical)/[a-z0-9-]+`, the three orgs of
+docs/ACTIVE-PROJECTS.md. The boundary stays deliberate: anything outside the
+portfolio is still rejected before any issue write, and a new portfolio
+repository needs no helper change.
+
+### mise table-form tool pins
+
+`watch-tools.py` read every `[tools]` entry as a bare version string, so
+mise's `github:`-backend pins in table form — `"github:owner/repo" = {
+version = "v0.0.8", asset_pattern = …, bin = … }`, as in
+aviorstudio/fieldsofrevik's `.mise.toml` — failed the parse. Table-form
+entries are now read from their `version` field and compared on the numeric
+core, because upstream tags decorate versions (`v0.0.8`, `cli-v0.0.5`,
+`4.4.1-stable`). Flat exact pins are checked exactly as before, and unknown
+version shapes still fail closed.
+
+### Bun application discovery
+
+`update-bun.py` hard-required a top-level `app/` manifest;
+aviorstudio/fieldsofrevik's Bun application is `playwright/`. The helper now
+discovers the product's own top-level package directories with the same
+tracked `*/package.json` scan `pins.mjs` uses, and refuses only when a product
+declares no manifest at all. Repositories with `app/` behave exactly as
+before.
+
+### Action reference misspelling guard
+
+A one-byte typo in a pinned action reference still satisfies the full-SHA rule
+but resolves to no repository, surfacing only as a `startup_failure` at
+dispatch time that CI cannot see: nicodes/komizo-be commit fd23b9c9 carried
+`nicodes/komozo-actions/publish@<sha>` (0x6f for 0x69) and every CD run failed
+at action resolution. `pins.mjs` now refuses — deterministically and
+network-free, naming the closest correction — any `uses:` org within two edits
+of `nicodes`, `aviorstudio` or `astrylogical` but not equal to one, and any
+reference under a portfolio org within two edits of a known fleet uses-target
+(`nicodes/komizo-actions`, `nicodes/cicd`, `aviorstudio/gdam-actions`) but not
+equal to it. Exact portfolio references and all third-party orgs are
+unaffected.
+
+### Handoff contract: porting deployed.yml to the reusable form
+
+Source: nicodes/komizo-be `docs/deployed-drift-reusable-handoff.md` (added in
+komizo-be@bc2a1a5f; the per-product check and its rationale live in
+`.github/workflows/deployed.yml`, komizo-be#137). Ported here as the
+fleet-wide adoption contract; the reusable workflow itself is not yet
+implemented in this repository.
+
+What the per-product check does today — hourly, deliberately off the top of
+the hour to dodge GitHub's scheduled-run queue congestion, with
+`actions: read` and the run-scoped `GITHUB_TOKEN` only:
+
+1. Read `main`'s HEAD: `gh api repos/<repo>/commits/main --jq .sha`.
+2. Read the newest **successful** run of the deploy workflow
+   (`actions/workflows/<deploy-workflow>/runs?status=success&per_page=1`),
+   server-side filtered so a queue of failures cannot hide the last good
+   deploy.
+3. Equal → pass. Different → fail loudly, listing exactly which commits are
+   on `main` and not in production (`compare/<deployed>...<head>`), naming
+   the known cause (a `GITHUB_TOKEN` push does not trigger CD) and the remedy
+   (`gh workflow run <deploy-workflow> --ref main`).
+
+Why it is a clean reusable candidate: the check touches no product endpoints,
+no secrets beyond `GITHUB_TOKEN`, and no runner state — it is pure gh-api
+glue, and in a called workflow `github.repository` resolves to the caller, so
+the whole body ports with a single parameter.
+
+The contract for the reusable form when it lands:
+
+- Path `.github/workflows/deployed.yml`, `on: workflow_call`.
+- One input, `deploy-workflow` (string, required): the caller's deploy
+  workflow FILE name, e.g. `cd.yml`. It is the only product-specific value in
+  the body.
+- Permissions: the caller must grant `actions: read` (a called job cannot
+  exceed the caller's grants); the job uses the implicit `GITHUB_TOKEN`, so
+  the caller needs no `secrets:` block.
+- Caller shape afterwards: the cron minute (fleet convention staggers
+  minutes) and `workflow_dispatch` stay on the caller; the job becomes
+  `uses: nicodes/cicd/.github/workflows/deployed.yml@<full-40-hex-cicd-commit>`
+  with the one input, pinned per the single-reusable-pin policy above.
+- Semantics to preserve exactly: server-side `status=success` filtering;
+  fail-closed on unreadable answers; the missing-commits list on failure — it
+  is the whole value of the alarm at 03:00.
+
+Residual product-local choice: none blocking; each product's cron minute stays
+caller-side.
+<!-- ws9/fleet-helper-compat: end -->

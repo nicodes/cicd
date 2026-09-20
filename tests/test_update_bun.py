@@ -67,11 +67,30 @@ class BunUpdates(unittest.TestCase):
         self.assertEqual([r['application'] for r in rows], ['app', 'e2e', 'web'])
         self.assertEqual(set(changes), {'app/bun.lock', 'web/bun.lock', 'e2e/bun.lock'})
 
-    def test_only_the_explicit_new_repositories_are_allowed(self):
-        for repo in ['aviorstudio/gdam-be', 'aviorstudio/termcade-be', 'astrylogical/astry-be']:
+    def test_the_products_own_package_directory_is_discovered(self):
+        # aviorstudio/fieldsofrevik tracks no `app/`; its Bun application is `playwright/`.
+        files = 'playwright/package.json\0playwright/bun.lock\0'
+        def prepare(root, application):
+            return [], {application+'/bun.lock': 'new'}
+        with patch.object(update, 'run', return_value=files), patch.object(update, 'prepare_application', side_effect=prepare) as prepare_application:
+            rows, changes = update.prepare(Path('/repo'))
+        self.assertEqual([call.args[1] for call in prepare_application.call_args_list], ['playwright'])
+        self.assertEqual(set(changes), {'playwright/bun.lock'})
+        with patch.object(update, 'run', return_value=''), patch.object(update, 'prepare_application') as prepare_application:
+            with self.assertRaises(ValueError):
+                update.prepare(Path('/repo'))
+            prepare_application.assert_not_called()
+
+    def test_only_portfolio_org_repositories_are_allowed(self):
+        # Org-level boundary (docs/ACTIVE-PROJECTS.md), the merge-checked.py form:
+        # an adopting portfolio repository needs no helper change.
+        for repo in ['aviorstudio/gdam-be', 'aviorstudio/termcade-be', 'astrylogical/astry-be',
+                     'aviorstudio/fieldsofrevik', 'aviorstudio/castledrop', 'nicodes/anything']:
             with patch.object(update, 'api', return_value={'object': {'sha': 'a'*40}}):
                 update.publish(repo, 'a'*40, [], {})
-        for repo in ['aviorstudio/unrelated', 'astrylogical/unrelated', 'attacker/gdam-be']:
+        for repo in ['attacker/gdam-be', 'evil/org', 'aviorstudio/HasUpper', 'aviorstudio/under_score',
+                     'aviorstudio/two/parts', 'aviorstudio/dot.git', 'aviorstudio/', 'nicodes',
+                     'aviorstudio/fieldsofrevik\n']:
             with patch.object(update, 'api') as api:
                 with self.assertRaises(ValueError):
                     update.publish(repo, 'a'*40, [], {})
