@@ -67,6 +67,29 @@ bun = "1.4.1"
                          [('bun', '1.4.1', '1.4.2'),
                           ('github:aviorstudio/gdam', 'v0.0.8', 'v0.0.9')])
 
+    def test_two_component_string_pins_compare_as_patch_zero(self):
+        # mise accepts a two-component core pin (fieldsofrevik's python = "3.12");
+        # the watcher must too, comparing it as 3.12.0 against the upstream latest.
+        root = Path('/tmp/tool-watch-fixture')
+        config = str(root/'.mise.toml')
+        def item(latest):
+            return {'source': {'path': config}, 'latest': latest}
+        outdated = {'python': item('3.12.8'), 'go': item('1.24.0')}
+        self.assertEqual(watch.updates(root, {'python': '3.12', 'go': '1.24.0'}, outdated),
+                         [('python', '3.12', '3.12.8')])
+        # Equal and older cores are not updates, normalized or exact.
+        for pin, latest in [('3.12', '3.12.0'), ('3.12', '3.11.9'),
+                            ('3.12.0', '3.12.0'), ('3.12.0', '3.11.9')]:
+            self.assertEqual(watch.updates(root, {'python': pin}, {'python': item(latest)}), [],
+                             msg=f'{pin} / {latest}')
+        # Exact three-part behavior is unchanged.
+        self.assertEqual(watch.updates(root, {'python': '3.12.0'}, {'python': item('3.12.1')}),
+                         [('python', '3.12.0', '3.12.1')])
+        # Malformed string pins still fail closed.
+        for bad in ['3', '3.12.x', '3.12.0.1', '', 'latest', 'v3.12']:
+            with self.assertRaises(ValueError, msg=bad):
+                watch.updates(root, {'python': bad}, {'python': item('3.12.8')})
+
     def test_table_form_decoration_variants_and_fail_closed(self):
         root = Path('/tmp/tool-watch-fixture')
         config = str(root/'.mise.toml')
