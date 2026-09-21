@@ -16,6 +16,19 @@ description: >
 runs:
   using: composite
   steps:
+    # Lint and format, against the biome.json copied verbatim from the
+    # archetype: one canonical configuration for every web repository, so
+    # style is a fleet property rather than a per-repo debate. The engine
+    # is @biomejs/biome, pinned as an exact devDependency in the product's
+    # package.json and installed by ../build's frozen install, which runs
+    # before this action in the Test job -- `bun x` resolves that local
+    # binary, so the gate always runs the pinned version, never a resolved
+    # latest. A source assertion, so it goes first: it needs nothing from
+    # ./dist and is cheaper than the assertions that do.
+    - name: Lint and format are canonical
+      shell: bash
+      run: bun x biome check
+
     # A build that emits nothing still "succeeds", so the artefact is
     # checked rather than the exit code.
     - name: The page was actually written
