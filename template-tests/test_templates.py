@@ -135,9 +135,14 @@ class StaticWebTemplateGate(unittest.TestCase):
                       'the schema URL records the pinned biome version')
         self.assertTrue(config['linter']['enabled'])
         self.assertTrue(config['formatter']['enabled'])
-        self.assertEqual(config['linter']['rules'], {'recommended': True})
+        self.assertEqual(config['linter']['rules'], {'preset': 'recommended'},
+                         'biome 2.5 deprecates the recommended key in favor of preset')
         astro = [o for o in config['overrides'] if o['includes'] == ['**/*.astro']]
         self.assertEqual(len(astro), 1, 'exactly one Astro pragmatism override')
+        correctness = astro[0]['linter']['rules']['correctness']
+        self.assertEqual(correctness, {'noUnusedVariables': 'off', 'noUnusedImports': 'off'},
+                         'Astro frontmatter references make template imports look unused; '
+                         'biome\'s Unsafe fix would break pages, so both rules stay off')
 
     def test_biome_check_is_wired_into_the_test_gate(self):
         action = (self.template / 'actions' / 'test' / 'action.yml').read_text()
