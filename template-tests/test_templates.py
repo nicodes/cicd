@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import re
 import shutil
@@ -92,6 +93,11 @@ class StaticWebTemplateGate(unittest.TestCase):
         action = self.template / 'actions' / 'test' / 'action.yml'
         scripts = composite_run_scripts(action.read_text())
         self.assertGreaterEqual(len(scripts), 2, 'common assertions must ship with the archetype')
+        # The biome step runs the adopter's installed devDependency against
+        # its real source tree; a fixture has neither node_modules nor a
+        # biome.json, so it is asserted structurally below rather than
+        # executed here.
+        scripts = [script for script in scripts if 'biome' not in script]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name, content in files.items():
@@ -122,6 +128,26 @@ class StaticWebTemplateGate(unittest.TestCase):
         result = self.run_test_action({'dist/index.html': '<html></html>',
                                        'dist/assets/site.css': 'body{}'})
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_biome_config_parses_and_pins_the_canonical_version(self):
+        config = json.loads((self.template / 'biome.json').read_text())
+        self.assertIn('/2.5.14/', config['$schema'],
+                      'the schema URL records the pinned biome version')
+        self.assertTrue(config['linter']['enabled'])
+        self.assertTrue(config['formatter']['enabled'])
+        self.assertEqual(config['linter']['rules'], {'recommended': True})
+        astro = [o for o in config['overrides'] if o['includes'] == ['**/*.astro']]
+        self.assertEqual(len(astro), 1, 'exactly one Astro pragmatism override')
+
+    def test_biome_check_is_wired_into_the_test_gate(self):
+        action = (self.template / 'actions' / 'test' / 'action.yml').read_text()
+        scripts = composite_run_scripts(action)
+        biome = [script for script in scripts if 'biome' in script]
+        self.assertEqual(len(biome), 1, 'exactly one canonical biome step')
+        self.assertEqual(biome[0], 'bun x biome check',
+                         'the bun channel resolves the product-pinned devDependency')
+        self.assertLess(action.index('bun x biome check'), action.index('dist/index.html'),
+                        'the source assertion runs before the ./dist assertions')
 
     def test_ci_workflow_is_two_independent_jobs_building_before_testing(self):
         ci = (self.template / 'ci.yml').read_text()

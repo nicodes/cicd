@@ -15,13 +15,53 @@ backend service. Extend exact tool pins when a product needs additional tools.
 `static-web` is the static site envelope (Astro on bun in the current adopters,
 hosted by Vercel, which deploys from its own build). Copy `ci.yml` into
 `.github/workflows/ci.yml`, `dependabot.yml` into `.github/dependabot.yml`,
-`.mise.toml` and `.gitignore` into the root, and `actions/build/action.yml` and
+`.mise.toml`, `biome.json` and `.gitignore` into the root, and `actions/build/action.yml` and
 `actions/test/action.yml` into `.github/actions/` — the workflow's jobs call
 these repo-local composite actions, so they are part of the archetype, not
 optional extras. This archetype omits the `Makefile` and `bun-updates.yml` on
 purpose: none of the three adopting repositories has either. Their entire gate
 is the two composite actions, and a second entry point would only drift from
 it; the bun pin lives in `.mise.toml` and moves with the product.
+
+## Fleet tool baseline
+
+Every archetype pins its shared tools exactly, as `x.y.z`, in its
+`.mise.toml`:
+
+| Tool | Pin | Archetypes |
+| --- | --- | --- |
+| go | 1.27.0 | full-stack, app-only |
+| golang.org/x/vuln/cmd/govulncheck | 1.7.0 | full-stack, app-only |
+| bun | 1.4.1 | all three |
+| node | 24.18.1 | full-stack, app-only |
+| python | 3.13.11 | full-stack, app-only |
+
+The baseline is per archetype, by need: `static-web` carries only bun because
+its gate is the two composite actions and its CI runs no Go or Python.
+Product-specific pins — Godot versions, extra node runtimes, komizo tooling —
+are product choices and live in the product's own `.mise.toml`, out of scope
+for this baseline.
+
+The rule is exact `x.y.z` pins, so one version is in force everywhere a
+repository runs. The single relaxation is mise's two-component core form
+(`python = "3.12"`, which floats the patch release): the fleet watcher
+normalizes it to a `x.y.0` comparison core rather than rejecting it, so it is
+tolerated where a product already uses it, but new pins are always exact
+three-component versions.
+
+## Canonical lint and format: Biome
+
+The web repositories share one lint+format configuration:
+`static-web/biome.json` is the canonical artifact and is copied verbatim into
+each adopting repository's root. The engine is `@biomejs/biome` at exactly
+`2.5.14`, installed as a devDependency in the product's `package.json`
+(the archetype ships no `package.json` of its own — the pin belongs to the
+product's manifest and lockfile, under the usual frozen-install gate). Biome
+is installed through the bun channel like every other JS dependency; the
+archetype's Test gate then runs `bun x biome check`, which fails the build on
+any lint or format violation against the canonical configuration. The
+configuration's `$schema` URL records the same version, so the pin, the
+schema and the gate move together in one commit when the fleet upgrades.
 
 `ci.yml` and `actions/build/action.yml` are admitted copies, identical across
 adopters. `actions/test/action.yml` is the per-repo override point: the
