@@ -265,9 +265,18 @@ must carry in a product's snapshot after moving to this pin:
 
 ## Bun update compatibility and issue-only decision
 
-GitHub Dependabot rejects the Bun 1.4.1 lockfile format (version 3). Use each
-archetype's `bun-updates.yml` as `.github/workflows/bun-updates.yml`; Dependabot
-continues covering actions, images and every Go module.
+Bun 1.4.1 writes lockfile version 2 by default; version 3 appears only for
+nested or version-scoped overrides (oven-sh/bun#31539). An earlier revision of
+this section attributed the Dependabot rejection to the version 3 format, but
+the exact lockfile format Dependabot rejected was not recorded and the claim
+predates this correction. Use each archetype's `bun-updates.yml` as
+`.github/workflows/bun-updates.yml`; Dependabot continues covering actions,
+images and every Go module. The first adopter's Dependabot run re-verifies
+whether this workaround is still needed.
+
+Bun 1.4.1 does not rewrite an existing lockfile on a no-op re-save, so update
+PRs produced by forced lockfile regeneration carry transitive re-resolves
+within declared ranges — expect more diff than the pin line; that is normal.
 
 Owner decision, 2026-09-05: the weekly native Bun workflow creates or updates one
 issue assigned to nicodes. It reports available direct releases and whether a
