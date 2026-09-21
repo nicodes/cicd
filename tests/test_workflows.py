@@ -14,7 +14,7 @@ import unittest
 
 ROOT = Path(__file__).parents[1]
 WORKFLOWS = ROOT/'.github'/'workflows'
-HELPER_REF = 'a170e0fde8a98744e9737847a653df926242a3c9'
+HELPER_REF = '644d2ade854e6d8cd8f06fe2895664162379f024'
 USE_KEY = re.compile(r'(?:^|[-\s])uses:\s*(?P<value>.+?)\s*$')
 SHA_PIN = re.compile(r'^[\w.-]+(?:/[\w.-]+)+@[0-9a-f]{40}\s+#\s*v?\d[\w.+-]*$')
 

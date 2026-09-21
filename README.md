@@ -260,7 +260,7 @@ must carry in a product's snapshot after moving to this pin:
 | `merge-checked.py` | `b86a1e741697e3f0034da2d3b7decc9af06a0d9e0f23cbd2d001dc90bd4c530e` |
 | `upload-backup.py` | `8194f864dbd432c7d6c71d82c1dc4d0218dc1e0abe9f5483360a140e9fa3b324` |
 | `vendor-snapshot.py` | `fcecb4b627cbbf8e91c3e48fa02e0b8e3329fde10e916a5a2e5d6c68cada1027` |
-| `scan-deployed.py` | `7078fd4b5f96adeca51e0544263059bd1054e450193235795daa9a3027815b68` |
+| `scan-deployed.py` | `e539e0c29dc9ad8055ebb3759d56ff45bbc0a7439c8a4793d81219c9283a8d42` |
 <!-- ws7/reusable-pin: end -->
 
 ## Bun update compatibility and issue-only decision
@@ -511,6 +511,12 @@ source (`.cicd`) to a full commit SHA, so a cicd merge that changes
 changing the helper cannot name its own merge SHA; the immediately following
 PR bumps both `ref:` pins to the previous merge commit. Never bump one
 checkout without the other (a test enforces they stay equal).
+
+The same bump-along rule covers the internal `.cicd` report-helper checkout
+in the `vuln.yml` and `tools.yml` reusables: their `ref:` pins must follow a
+tip that carries the current `report-failure.py`. A stale pin there runs an
+older portfolio identity check and rejects new adopters at the Report-failure
+step (fleet: fieldsofrevik vuln run 35554205957).
 
 What the thin caller replaces, in full:
 
