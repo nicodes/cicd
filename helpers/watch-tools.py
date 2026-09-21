@@ -30,9 +30,14 @@ def updates(root, installed, outdated):
             latest_core = decorated_version(name, latest, 'upstream')
         else:
             current = entry
-            if not isinstance(current, str) or not re.fullmatch(r'\d+\.\d+\.\d+', current):
+            if not isinstance(current, str):
                 raise ValueError(f'{name}: expected an exact repository version')
-            current_core = current
+            # A two-component core (python = "3.12") is a valid mise pin that
+            # floats the patch; normalize it so it compares as 3.12.0.
+            match = re.fullmatch(r'(\d+\.\d+)(?:\.(\d+))?', current)
+            if not match:
+                raise ValueError(f'{name}: expected an exact repository version')
+            current_core = match.group(1) + '.' + (match.group(2) or '0')
             if not isinstance(latest, str) or not re.fullmatch(r'\d+\.\d+\.\d+', latest):
                 raise ValueError(f'{name}: unrecognized upstream version')
             latest_core = latest

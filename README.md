@@ -659,6 +659,10 @@ core, because upstream tags decorate versions (`v0.0.8`, `cli-v0.0.5`,
 `4.4.1-stable`). Flat exact pins are checked exactly as before, and unknown
 version shapes still fail closed.
 
+A flat pin may also use mise's two-component core form (`python = "3.12"`,
+which floats the patch release); the watcher normalizes it to a `3.12.0`
+comparison core instead of rejecting it.
+
 ### Bun application discovery
 
 `update-bun.py` hard-required a top-level `app/` manifest;
