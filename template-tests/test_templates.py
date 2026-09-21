@@ -140,3 +140,23 @@ class StaticWebTemplateGate(unittest.TestCase):
                 continue
             self.assertRegex(uses.split('@', 1)[1], r'^[0-9a-f]{40}$',
                              f'{uses} must be pinned by full commit SHA')
+
+    def test_canonical_biome_config_parses_and_is_wired_into_the_build_gate(self):
+        import json
+        import tomllib
+        # The five web repositories adopt this exact config -- never their own.
+        config = json.loads((self.template / 'biome.json').read_text())
+        self.assertEqual(config['$schema'], 'https://biomejs.dev/schemas/2.5.14/schema.json')
+        self.assertTrue(config['formatter']['enabled'])
+        self.assertTrue(config['linter']['enabled'])
+        self.assertEqual(config['linter']['rules'], {'recommended': True})
+        # Biome is pinned with the rest of the runner toolchain, at the exact
+        # release the canonical config was written against.
+        mise = tomllib.loads((self.template / '.mise.toml').read_text())
+        self.assertEqual(mise['tools']['bun'], '1.4.1')
+        self.assertEqual(mise['tools']['aqua:biomejs/biome'], '2.5.14')
+        # The canonical check is part of the build gate, so adopters get the
+        # lint+format gate through the archetype.
+        build_action = (self.template / 'actions' / 'build' / 'action.yml').read_text()
+        self.assertIn('Lint and format check', build_action)
+        self.assertIn('biome ci .', build_action)

@@ -22,6 +22,17 @@ runs:
       shell: bash
       run: bun install --frozen-lockfile
 
+    # Lint + format run here rather than in ../test: biome ci reads the
+    # product's own biome.json (the archetype's canonical copy, adopted
+    # verbatim by the five web repos) and fails on any diagnostic, and a
+    # source-level failure is the cheapest gate -- it should not wait behind
+    # a type check or a build. Biome is pinned in .mise.toml (the aqua backend
+    # ships a prebuilt binary) with the rest of the runner toolchain, so the
+    # check needs no extra dependency in the product's package.json.
+    - name: Lint and format check
+      shell: bash
+      run: biome ci .
+
     # Before the build rather than after it: a type error is both the
     # likeliest failure and the cheapest to reach, and it needs nothing from
     # ./dist. The product's package.json defines the `typecheck` script (the

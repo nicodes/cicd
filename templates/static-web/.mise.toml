@@ -1,2 +1,6 @@
 [tools]
-bun = "1.3"
+bun = "1.4.1"
+# Biome is pinned here with the rest of the runner toolchain, at the exact
+# release the canonical biome.json was written against -- adopters get the
+# lint/format gate with no extra dependency in their package.json.
+"aqua:biomejs/biome" = "2.5.14"

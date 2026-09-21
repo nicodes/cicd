@@ -15,8 +15,8 @@ backend service. Extend exact tool pins when a product needs additional tools.
 `static-web` is the static site envelope (Astro on bun in the current adopters,
 hosted by Vercel, which deploys from its own build). Copy `ci.yml` into
 `.github/workflows/ci.yml`, `dependabot.yml` into `.github/dependabot.yml`,
-`.mise.toml` and `.gitignore` into the root, and `actions/build/action.yml` and
-`actions/test/action.yml` into `.github/actions/` — the workflow's jobs call
+`.mise.toml`, `.gitignore` and `biome.json` into the root, and
+`actions/build/action.yml` and `actions/test/action.yml` into `.github/actions/` — the workflow's jobs call
 these repo-local composite actions, so they are part of the archetype, not
 optional extras. This archetype omits the `Makefile` and `bun-updates.yml` on
 purpose: none of the three adopting repositories has either. Their entire gate
@@ -68,3 +68,19 @@ Concrete implementations: `nicodes/ormos-be`, `nicodes/cazper-be` and
 release; their integration tickets track final adoption and rollout evidence.
 Static-web: `aviorstudio/aviorstudio-web`, `nicodes/tonesplit-web` and
 `nicodes/ctcalc-web`.
+
+## Fleet tool baseline
+
+The shared-tool baseline, pinned at exact versions across every archetype's
+`.mise.toml`: **go 1.27.0, govulncheck 1.7.0, bun 1.4.1, python 3.13.11**.
+These are the tools the fleet's shared gates run on; a product needing an
+additional tool extends the pins, but it does not float one of these.
+godot, node and komizo-tool pins are product choices and stay out of this
+baseline. The exact-version rule (`x.y.z`) stands; the one accepted
+relaxation is a two-component core (`python = "3.12"`), which floats the
+patch and compares as `3.12.0` (the watcher's normalization).
+
+`static-web` additionally pins Biome (`aqua:biomejs/biome`, currently 2.5.14)
+in its `.mise.toml` and ships `biome.json` — the canonical lint+format
+config the five web repositories adopt verbatim; its CI gate runs
+`biome ci` against it. None of the web repos invents its own Biome config.
