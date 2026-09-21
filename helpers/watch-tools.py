@@ -39,7 +39,21 @@ def updates(root, installed, outdated):
                 raise ValueError(f'{name}: expected an exact repository version')
             current_core = match.group(1) + '.' + (match.group(2) or '0')
             if not isinstance(latest, str) or not re.fullmatch(r'\d+\.\d+\.\d+', latest):
-                raise ValueError(f'{name}: unrecognized upstream version')
+                if match.group(2) is None:
+                    # A floating pin's upstream answer depends on the mise
+                    # environment: a fresh mise-action install can answer a
+                    # non-x.y.z latest/bump for python = "3.12" where a warm
+                    # workstation answers 3.12.14 (fleet: fieldsofrevik tools
+                    # dispatch 35552447413). Undetermined is neither drift nor
+                    # an error — skip the tool, visibly, in the step log.
+                    print(f'{name}: upstream latest {latest!r} is not an x.y.z '
+                          f'version; floating pin {current} cannot be compared '
+                          '(skipping as undetermined)')
+                    continue
+                # Exact pins compare strictly; an unreadable upstream shape
+                # fails loudly, naming the offending value and pin.
+                raise ValueError(f'{name}: unrecognized upstream version '
+                                 f'{latest!r} for exact pin {current}')
             latest_core = latest
         if tuple(map(int, latest_core.split('.'))) > tuple(map(int, current_core.split('.'))):
             result.append((name, current, latest))

@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nicodes/cicd
-          ref: a170e0fde8a98744e9737847a653df926242a3c9
+          ref: 644d2ade854e6d8cd8f06fe2895664162379f024 # report-failure helper with the portfolio identity widening (bump-along rule, see README)
           path: .cicd
           persist-credentials: false
           sparse-checkout: helpers/

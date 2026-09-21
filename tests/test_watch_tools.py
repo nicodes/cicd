@@ -1,6 +1,8 @@
 import importlib.util
+import io
 import json
 import os
+from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
 import unittest
@@ -89,6 +91,43 @@ bun = "1.4.1"
         for bad in ['3', '3.12.x', '3.12.0.1', '', 'latest', 'v3.12']:
             with self.assertRaises(ValueError, msg=bad):
                 watch.updates(root, {'python': bad}, {'python': item('3.12.8')})
+
+    def test_floating_pin_skips_environment_divergent_upstream_visibly(self):
+        # Runner shape (fleet: fieldsofrevik tools dispatch 35552447413): on a
+        # fresh mise-action environment a floating pin's upstream latest/bump
+        # is not x.y.z, while a workstation answers e.g. 3.12.14. That is
+        # undetermined drift — skip with a visible note, never crash, and
+        # never report the tool as an update.
+        root = Path('/tmp/tool-watch-fixture')
+        config = str(root/'.mise.toml')
+        for key in ['latest', 'bump']:
+            for shape in ['latest', '3.12', '3.12.14-mise', '', None, 3.12]:
+                item = {'source': {'path': config}, key: shape}
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    result = watch.updates(root, {'python': '3.12'}, {'python': item})
+                self.assertEqual(result, [], msg=f'{key}={shape!r}')
+                self.assertIn('python', out.getvalue(), msg=f'{key}={shape!r}')
+                self.assertIn('undetermined', out.getvalue(), msg=f'{key}={shape!r}')
+        # Workstation shape: an x.y.z answer compares normally, silently.
+        item = {'source': {'path': config}, 'latest': '3.12.14'}
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result = watch.updates(root, {'python': '3.12'}, {'python': item})
+        self.assertEqual(result, [('python', '3.12', '3.12.14')])
+        self.assertEqual(out.getvalue(), '')
+
+    def test_exact_pin_unreadable_upstream_fails_loudly(self):
+        # The tolerate-as-undetermined rule is scoped to pins that can float;
+        # an exact pin keeps strict comparison and fails with the value.
+        root = Path('/tmp/tool-watch-fixture')
+        config = str(root/'.mise.toml')
+        item = {'source': {'path': config}, 'latest': 'latest'}
+        with self.assertRaises(ValueError) as failure:
+            watch.updates(root, {'python': '3.12.0'}, {'python': item})
+        message = str(failure.exception)
+        self.assertIn("unrecognized upstream version 'latest'", message)
+        self.assertIn('3.12.0', message)
 
     def test_table_form_decoration_variants_and_fail_closed(self):
         root = Path('/tmp/tool-watch-fixture')
