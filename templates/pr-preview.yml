@@ -6,8 +6,8 @@ name: PR preview
 #
 # Copy to .github/workflows/pr-preview.yml in the adopting product, replace
 # the two product-owned values marked <product-...> (both jobs, identical),
-# repin the composite to the released v0.0.16 peeled commit SHA, and set the
-# secrets/vars listed in the README section.
+# and set the secrets/vars listed in the README section. The preview
+# composite is already pinned to the v0.0.16 release below.
 on:
   pull_request:
     # pull_request, NOT pull_request_target: the preview exists to run the
@@ -66,7 +66,7 @@ jobs:
           echo "refs=${refs# }" >> "$GITHUB_OUTPUT"
       - name: Preview up
         id: preview
-        uses: nicodes/komizo-actions/preview@0000000000000000000000000000000000000000 # placeholder — repin to the v0.0.16 peeled commit SHA when WS26 releases the composite
+        uses: nicodes/komizo-actions/preview@f0e66073aac7f410b02ee6737b817e7a95d2173b # v0.0.16 — pinned to the release's peeled commit SHA, never the annotated tag object
         env:
           # The deploy-key SSH path, identical to the deploy composite's:
           # the composite cannot read the secrets context, so exactly these
@@ -137,7 +137,7 @@ jobs:
           done
           echo "refs=${refs# }" >> "$GITHUB_OUTPUT"
       - name: Preview down
-        uses: nicodes/komizo-actions/preview@0000000000000000000000000000000000000000 # placeholder — repin to the v0.0.16 peeled commit SHA when WS26 releases the composite
+        uses: nicodes/komizo-actions/preview@f0e66073aac7f410b02ee6737b817e7a95d2173b # v0.0.16 — pinned to the release's peeled commit SHA, never the annotated tag object
         env:
           KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
           KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
