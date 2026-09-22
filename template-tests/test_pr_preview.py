@@ -8,9 +8,9 @@ README = Path(__file__).parents[1] / 'templates' / 'README.md'
 GUARD = 'github.event.pull_request.head.repo.full_name == github.repository'
 MARKER = '<!-- preview -->'
 COMPOSITE = 'nicodes/komizo-actions/preview'
-# The peeled commit of the v0.0.19 release tag of komizo-actions — NOT the
-# annotated tag object (3ebf1debe975a3f5f8d26f7f631181c46c6bd9ef).
-V0_0_19_PEELED = 'c279f86a61d63fe929e018aa3b6c1077f3d8e65f'
+# The peeled commit of the v0.0.20 release tag of komizo-actions — NOT the
+# annotated tag object (7422b51eb0ee45597292da052fcfacff2ec1ac02).
+V0_0_20_PEELED = '21d179beff948b1822ca940b46b1c7dc0b35b16c'
 
 
 def job(text, name):
@@ -64,26 +64,43 @@ class PrPreviewTemplate(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertIn('contents: read', section)
                 self.assertIn('pull-requests: write', section, 'the sticky comment — nothing else')
-        for scope in ['packages', 'id-token', 'deployments', 'secrets']:
+        up_perms = self.up.split('steps:')[0]
+        down_perms = self.down.split('steps:')[0]
+        self.assertIn('packages: read', up_perms,
+                      'up pulls ghcr images as root on the host — the run GITHUB_TOKEN needs packages:read')
+        self.assertNotIn('packages:', down_perms, 'down pulls nothing — no registry grant there')
+        self.assertEqual(self.text.count('packages: read'), 1, 'packages: read exactly once, preview-up only')
+        for scope in ['id-token', 'deployments', 'secrets']:
             self.assertIsNone(re.search(rf'^\s*{scope}:', self.text, re.M),
                               f'{scope}: is never granted (comments explaining its absence excepted)')
         self.assertEqual(re.findall(r'secrets\.([A-Z_]+)', self.text),
-                         ['KOMIZO_DEPLOY_KEY', 'KOMIZO_DEPLOY_KEY'],
-                         'the only secret named, once per job, is the deploy key')
+                         ['KOMIZO_DEPLOY_KEY', 'GITHUB_TOKEN', 'KOMIZO_DEPLOY_KEY'],
+                         'the deploy key, once per job, plus the run-scoped GITHUB_TOKEN as the up pull credential')
         self.assertEqual(sorted(set(re.findall(r'vars\.([A-Z_]+)', self.text))),
                          ['KOMIZO_KNOWN_HOSTS', 'KOMIZO_SERVER_URL'],
                          'the deploy composite\'s SSH env path, nothing else')
 
-    def test_composite_is_pinned_to_the_v0_0_19_peeled_commit(self):
+    def test_composite_is_pinned_to_the_v0_0_20_peeled_commit(self):
         uses = re.findall(rf'uses: {re.escape(COMPOSITE)}@([0-9a-f]{{40}})([^\n]*)', self.text)
         self.assertEqual(len(uses), 2, 'both jobs call the preview composite, SHA-pinned')
         for sha, comment in uses:
-            self.assertEqual(sha, V0_0_19_PEELED,
-                             'the pin is the v0.0.19 peeled commit, never the annotated tag object')
-            self.assertIn('# v0.0.19', comment, 'the trailing comment names the release the SHA peels')
+            self.assertEqual(sha, V0_0_20_PEELED,
+                             'the pin is the v0.0.20 peeled commit, never the annotated tag object')
+            self.assertIn('# v0.0.20', comment, 'the trailing comment names the release the SHA peels')
             self.assertNotIn('placeholder', comment, 'the placeholder note is gone — the pin is real')
-        self.assertNotIn('3ebf1debe975a3f5f8d26f7f631181c46c6bd9ef', self.text,
+        self.assertNotIn('7422b51eb0ee45597292da052fcfacff2ec1ac02', self.text,
                          'the annotated tag object SHA must never appear as the pin')
+
+    def test_up_wires_the_required_registry_credentials(self):
+        """Since v0.0.20 the composite fails closed if `up` lacks the registry
+        login: the pull runs as root on the host and root's docker config
+        carries no ghcr authorization. Same wiring as the deploy composite —
+        the run-scoped GITHUB_TOKEN, never a long-lived PAT. Down pulls
+        nothing, so it wires neither input."""
+        self.assertIn('registry-user: ${{ github.actor }}', self.up)
+        self.assertIn('registry-token: ${{ secrets.GITHUB_TOKEN }}', self.up)
+        self.assertNotIn('registry-user', self.down)
+        self.assertNotIn('registry-token', self.down)
 
     def test_interface_contract_inputs_and_actions(self):
         for name, section, action in [('preview-up', self.up, 'up'), ('preview-down', self.down, 'down')]:

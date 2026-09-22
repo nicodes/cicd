@@ -7,7 +7,7 @@ name: PR preview
 # Copy to .github/workflows/pr-preview.yml in the adopting product, replace
 # the two product-owned values marked <product-...> (both jobs, identical),
 # and set the secrets/vars listed in the README section. The preview
-# composite is already pinned to the v0.0.19 release below.
+# composite is already pinned to the v0.0.20 release below.
 on:
   pull_request:
     # pull_request, NOT pull_request_target: the preview exists to run the
@@ -35,6 +35,7 @@ jobs:
     permissions:
       contents: read        # checkout of the PR head
       pull-requests: write  # the one sticky comment, and nothing else
+      packages: read        # the run's GITHUB_TOKEN is the ghcr pull credential (registry-token below)
     concurrency:
       # Per-PR group: a new push supersedes the in-flight preview deploy of
       # the same PR. The close path shares this group with
@@ -66,7 +67,7 @@ jobs:
           echo "refs=${refs# }" >> "$GITHUB_OUTPUT"
       - name: Preview up
         id: preview
-        uses: nicodes/komizo-actions/preview@c279f86a61d63fe929e018aa3b6c1077f3d8e65f # v0.0.19 — pinned to the release's peeled commit SHA, never the annotated tag object
+        uses: nicodes/komizo-actions/preview@21d179beff948b1822ca940b46b1c7dc0b35b16c # v0.0.20 — pinned to the release's peeled commit SHA, never the annotated tag object
         env:
           # The deploy-key SSH path, identical to the deploy composite's:
           # the composite cannot read the secrets context, so exactly these
@@ -79,6 +80,14 @@ jobs:
           pr-number: ${{ github.event.pull_request.number }}
           images: ${{ steps.images.outputs.refs }}
           action: up
+          # Required on up since v0.0.20 (fail-closed): the pull runs AS ROOT
+          # on the host through the doas wrapper, and root's docker config
+          # carries no ghcr authorization — without a login the pull fails
+          # anonymous. Same wiring as the deploy composite: the run's own
+          # GITHUB_TOKEN (the packages grant above), never a long-lived PAT;
+          # the host drops the credential however the run exits.
+          registry-user: ${{ github.actor }}
+          registry-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upsert the sticky preview comment
         # The Vercel pattern with the runner's preinstalled gh CLI and the
         # workflow's own GITHUB_TOKEN — no external action, so nothing to pin.
@@ -137,7 +146,7 @@ jobs:
           done
           echo "refs=${refs# }" >> "$GITHUB_OUTPUT"
       - name: Preview down
-        uses: nicodes/komizo-actions/preview@c279f86a61d63fe929e018aa3b6c1077f3d8e65f # v0.0.19 — pinned to the release's peeled commit SHA, never the annotated tag object
+        uses: nicodes/komizo-actions/preview@21d179beff948b1822ca940b46b1c7dc0b35b16c # v0.0.20 — pinned to the release's peeled commit SHA, never the annotated tag object
         env:
           KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
           KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}

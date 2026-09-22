@@ -38,18 +38,28 @@ Adopting it:
   and `COMPONENTS` (the space-separated image components whose refs the
   preview deploys, named `ghcr.io/<owner>/<project>-<component>:<head-sha>`).
   Do not repin the composite on copy: the template already ships the real
-  v0.0.19 pin (`c279f86a61d63fe929e018aa3b6c1077f3d8e65f`, the release's
+  v0.0.20 pin (`21d179beff948b1822ca940b46b1c7dc0b35b16c`, the release's
   peeled commit SHA, never the annotated tag object). Future composite
   updates move through the fleet pin record,
   `scripts/engineering/ACTION-PINS.json`, as usual.
 - **Secrets and vars to set.** Exactly the deploy composite's SSH path, as
   repo-level entries: the `KOMIZO_DEPLOY_KEY` secret and the
   `KOMIZO_SERVER_URL` and `KOMIZO_KNOWN_HOSTS` variables. The workflow names
-  nothing else: the sticky comment uses the workflow's own `GITHUB_TOKEN`, and
-  the jobs' permissions floor is `contents: read` plus `pull-requests: write`
-  — no `packages`, no other secret. Image builds and their `packages: write`
-  push stay in the product's own CI; this workflow only derives the refs CI
-  already published for the PR's head SHA.
+  no other product-owned secret: the sticky comment uses the workflow's own
+  `GITHUB_TOKEN`, and the jobs' permissions floor is `contents: read` plus
+  `pull-requests: write`. Image builds and their `packages: write` push stay
+  in the product's own CI; this workflow only derives the refs CI already
+  published for the PR's head SHA.
+- **The registry wiring is required — do not delete it on copy.** Since
+  v0.0.20 the up invocation must pass `registry-user: ${{ github.actor }}`
+  and `registry-token: ${{ secrets.GITHUB_TOKEN }}`, and the preview-up job
+  must grant `packages: read`: `up` pulls the PR's images AS ROOT on the
+  host through the doas wrapper, and root's docker config carries no ghcr
+  authorization — without a login the composite fails closed before touching
+  the host. The run-scoped `GITHUB_TOKEN` is the credential on purpose
+  (never a long-lived PAT); it travels on stdin to the host's root-owned
+  preview wrapper, which drops it however the run exits. The teardown job
+  needs neither the inputs nor `packages: read` — `down` pulls nothing.
 - **The same-repo guard is non-negotiable.** Every job that touches secrets or
   the preview infrastructure carries the job-level
   `if: … github.event.pull_request.head.repo.full_name == github.repository`.
