@@ -37,9 +37,11 @@ Adopting it:
   product-owned values in BOTH jobs, identically: `APP` (the komizo app slug)
   and `COMPONENTS` (the space-separated image components whose refs the
   preview deploys, named `ghcr.io/<owner>/<project>-<component>:<head-sha>`).
-  Repin the composite: the template ships a placeholder SHA; replace both
-  `uses: nicodes/komizo-actions/preview@…` pins with the v0.0.16 peeled commit
-  SHA (per the fleet pin record, `scripts/engineering/ACTION-PINS.json`).
+  Do not repin the composite on copy: the template already ships the real
+  v0.0.16 pin (`f0e66073aac7f410b02ee6737b817e7a95d2173b`, the release's
+  peeled commit SHA, never the annotated tag object). Future composite
+  updates move through the fleet pin record,
+  `scripts/engineering/ACTION-PINS.json`, as usual.
 - **Secrets and vars to set.** Exactly the deploy composite's SSH path, as
   repo-level entries: the `KOMIZO_DEPLOY_KEY` secret and the
   `KOMIZO_SERVER_URL` and `KOMIZO_KNOWN_HOSTS` variables. The workflow names
