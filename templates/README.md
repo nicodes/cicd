@@ -38,7 +38,7 @@ Adopting it:
   and `COMPONENTS` (the space-separated image components whose refs the
   preview deploys, named `ghcr.io/<owner>/<project>-<component>:<head-sha>`).
   Do not repin the composite on copy: the template already ships the real
-  v0.0.17 pin (`22c47079db1f6281f56e79fd6f43a970156cbcbc`, the release's
+  v0.0.19 pin (`c279f86a61d63fe929e018aa3b6c1077f3d8e65f`, the release's
   peeled commit SHA, never the annotated tag object). Future composite
   updates move through the fleet pin record,
   `scripts/engineering/ACTION-PINS.json`, as usual.

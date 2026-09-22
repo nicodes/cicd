@@ -8,9 +8,9 @@ README = Path(__file__).parents[1] / 'templates' / 'README.md'
 GUARD = 'github.event.pull_request.head.repo.full_name == github.repository'
 MARKER = '<!-- preview -->'
 COMPOSITE = 'nicodes/komizo-actions/preview'
-# The peeled commit of the v0.0.17 release tag of komizo-actions — NOT the
-# annotated tag object (f314742a3908feff17a3761328853c6c9b31a08e).
-V0_0_17_PEELED = '22c47079db1f6281f56e79fd6f43a970156cbcbc'
+# The peeled commit of the v0.0.19 release tag of komizo-actions — NOT the
+# annotated tag object (3ebf1debe975a3f5f8d26f7f631181c46c6bd9ef).
+V0_0_19_PEELED = 'c279f86a61d63fe929e018aa3b6c1077f3d8e65f'
 
 
 def job(text, name):
@@ -74,15 +74,15 @@ class PrPreviewTemplate(unittest.TestCase):
                          ['KOMIZO_KNOWN_HOSTS', 'KOMIZO_SERVER_URL'],
                          'the deploy composite\'s SSH env path, nothing else')
 
-    def test_composite_is_pinned_to_the_v0_0_17_peeled_commit(self):
+    def test_composite_is_pinned_to_the_v0_0_19_peeled_commit(self):
         uses = re.findall(rf'uses: {re.escape(COMPOSITE)}@([0-9a-f]{{40}})([^\n]*)', self.text)
         self.assertEqual(len(uses), 2, 'both jobs call the preview composite, SHA-pinned')
         for sha, comment in uses:
-            self.assertEqual(sha, V0_0_17_PEELED,
-                             'the pin is the v0.0.17 peeled commit, never the annotated tag object')
-            self.assertIn('# v0.0.17', comment, 'the trailing comment names the release the SHA peels')
+            self.assertEqual(sha, V0_0_19_PEELED,
+                             'the pin is the v0.0.19 peeled commit, never the annotated tag object')
+            self.assertIn('# v0.0.19', comment, 'the trailing comment names the release the SHA peels')
             self.assertNotIn('placeholder', comment, 'the placeholder note is gone — the pin is real')
-        self.assertNotIn('f314742a3908feff17a3761328853c6c9b31a08e', self.text,
+        self.assertNotIn('3ebf1debe975a3f5f8d26f7f631181c46c6bd9ef', self.text,
                          'the annotated tag object SHA must never appear as the pin')
 
     def test_interface_contract_inputs_and_actions(self):
