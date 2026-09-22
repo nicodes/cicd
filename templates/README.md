@@ -23,6 +23,52 @@ purpose: none of the three adopting repositories has either. Their entire gate
 is the two composite actions, and a second entry point would only drift from
 it; the bun pin lives in `.mise.toml` and moves with the product.
 
+## PR preview deployments
+
+`pr-preview.yml` is the per-PR preview template: every same-repo pull request
+gets a live preview stack through the `nicodes/komizo-actions/preview`
+composite, one sticky PR comment carries the URLs, and closing the PR tears
+the stack down. It is a documented template, not an archetype — copy it into
+`.github/workflows/pr-preview.yml` and finish the product-owned parts.
+
+Adopting it:
+
+- **What to copy.** `pr-preview.yml` verbatim, then replace the two
+  product-owned values in BOTH jobs, identically: `APP` (the komizo app slug)
+  and `COMPONENTS` (the space-separated image components whose refs the
+  preview deploys, named `ghcr.io/<owner>/<project>-<component>:<head-sha>`).
+  Repin the composite: the template ships a placeholder SHA; replace both
+  `uses: nicodes/komizo-actions/preview@…` pins with the v0.0.16 peeled commit
+  SHA (per the fleet pin record, `scripts/engineering/ACTION-PINS.json`).
+- **Secrets and vars to set.** Exactly the deploy composite's SSH path, as
+  repo-level entries: the `KOMIZO_DEPLOY_KEY` secret and the
+  `KOMIZO_SERVER_URL` and `KOMIZO_KNOWN_HOSTS` variables. The workflow names
+  nothing else: the sticky comment uses the workflow's own `GITHUB_TOKEN`, and
+  the jobs' permissions floor is `contents: read` plus `pull-requests: write`
+  — no `packages`, no other secret. Image builds and their `packages: write`
+  push stay in the product's own CI; this workflow only derives the refs CI
+  already published for the PR's head SHA.
+- **The same-repo guard is non-negotiable.** Every job that touches secrets or
+  the preview infrastructure carries the job-level
+  `if: … github.event.pull_request.head.repo.full_name == github.repository`.
+  The trigger is `pull_request`, never `pull_request_target`: the preview runs
+  the PR's own code, so the guard — not the trigger — is the security control.
+  Never weaken, move to step level, or delete it.
+- **Fork PRs skip everything.** A pull request from a fork fails the guard at
+  job evaluation: no checkout of untrusted code next to secrets, no
+  `KOMIZO_DEPLOY_KEY` in scope, no preview stack created or torn down. Both
+  jobs skip, silently, on every event type including `closed`.
+- **The one-sticky-comment invariant.** Exactly one preview comment per PR,
+  marked `<!-- preview -->`. The first successful deploy creates it; every
+  `synchronize` updates that same comment in place with the fresh URL, API
+  URL, head SHA and health-gate status; the close path makes a final update
+  marking it torn down, and creates nothing if no deploy ever succeeded.
+- **Concurrency.** Both jobs share the per-PR group `preview-<number>`. A new
+  push cancels the in-flight deploy (`cancel-in-progress: true`); the teardown
+  declares `cancel-in-progress: false` in the same group, so a close that
+  lands mid-deploy queues behind it and tears down the finished stack, and the
+  teardown itself is never superseded.
+
 ## Fleet tool baseline
 
 Every archetype pins its shared tools exactly, as `x.y.z`, in its
