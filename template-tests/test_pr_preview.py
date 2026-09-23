@@ -8,9 +8,9 @@ README = Path(__file__).parents[1] / 'templates' / 'README.md'
 GUARD = 'github.event.pull_request.head.repo.full_name == github.repository'
 MARKER = '<!-- preview -->'
 COMPOSITE = 'nicodes/komizo-actions/preview'
-# The peeled commit of the v0.0.20 release tag of komizo-actions — NOT the
-# annotated tag object (7422b51eb0ee45597292da052fcfacff2ec1ac02).
-V0_0_20_PEELED = '21d179beff948b1822ca940b46b1c7dc0b35b16c'
+# The peeled commit of the v0.0.21 release tag of komizo-actions — NOT the
+# annotated tag object (d7cb0c07895eaa19361cd5fb9063e649a616f143).
+V0_0_21_PEELED = 'eaf9336958cc7d65532878fcf6fbaad0f9582f85'
 
 
 def job(text, name):
@@ -80,19 +80,19 @@ class PrPreviewTemplate(unittest.TestCase):
                          ['KOMIZO_KNOWN_HOSTS', 'KOMIZO_SERVER_URL'],
                          'the deploy composite\'s SSH env path, nothing else')
 
-    def test_composite_is_pinned_to_the_v0_0_20_peeled_commit(self):
+    def test_composite_is_pinned_to_the_v0_0_21_peeled_commit(self):
         uses = re.findall(rf'uses: {re.escape(COMPOSITE)}@([0-9a-f]{{40}})([^\n]*)', self.text)
         self.assertEqual(len(uses), 2, 'both jobs call the preview composite, SHA-pinned')
         for sha, comment in uses:
-            self.assertEqual(sha, V0_0_20_PEELED,
-                             'the pin is the v0.0.20 peeled commit, never the annotated tag object')
-            self.assertIn('# v0.0.20', comment, 'the trailing comment names the release the SHA peels')
+            self.assertEqual(sha, V0_0_21_PEELED,
+                             'the pin is the v0.0.21 peeled commit, never the annotated tag object')
+            self.assertIn('# v0.0.21', comment, 'the trailing comment names the release the SHA peels')
             self.assertNotIn('placeholder', comment, 'the placeholder note is gone — the pin is real')
-        self.assertNotIn('7422b51eb0ee45597292da052fcfacff2ec1ac02', self.text,
+        self.assertNotIn('d7cb0c07895eaa19361cd5fb9063e649a616f143', self.text,
                          'the annotated tag object SHA must never appear as the pin')
 
     def test_up_wires_the_required_registry_credentials(self):
-        """Since v0.0.20 the composite fails closed if `up` lacks the registry
+        """The composite fails closed if `up` lacks the registry
         login: the pull runs as root on the host and root's docker config
         carries no ghcr authorization. Same wiring as the deploy composite —
         the run-scoped GITHUB_TOKEN, never a long-lived PAT. Down pulls
