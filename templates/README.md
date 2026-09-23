@@ -38,7 +38,7 @@ Adopting it:
   and `COMPONENTS` (the space-separated image components whose refs the
   preview deploys, named `ghcr.io/<owner>/<project>-<component>:<head-sha>`).
   Do not repin the composite on copy: the template already ships the real
-  v0.0.20 pin (`21d179beff948b1822ca940b46b1c7dc0b35b16c`, the release's
+  v0.0.21 pin (`eaf9336958cc7d65532878fcf6fbaad0f9582f85`, the release's
   peeled commit SHA, never the annotated tag object). Future composite
   updates move through the fleet pin record,
   `scripts/engineering/ACTION-PINS.json`, as usual.
@@ -51,7 +51,7 @@ Adopting it:
   in the product's own CI; this workflow only derives the refs CI already
   published for the PR's head SHA.
 - **The registry wiring is required — do not delete it on copy.** Since
-  v0.0.20 the up invocation must pass `registry-user: ${{ github.actor }}`
+  v0.0.21 the up invocation must pass `registry-user: ${{ github.actor }}`
   and `registry-token: ${{ secrets.GITHUB_TOKEN }}`, and the preview-up job
   must grant `packages: read`: `up` pulls the PR's images AS ROOT on the
   host through the doas wrapper, and root's docker config carries no ghcr
