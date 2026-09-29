@@ -36,7 +36,182 @@ def docker(*args, input=None, timeout=60):
     return result.stdout.strip()
 
 
+# Which store a product's snapshot restores into. A product that migrates to
+# PostgreSQL flips its entry here and nothing else in this file changes: the
+# two halves of the drill share the envelope, the image authentication and the
+# frontend check, and differ only in what they boot the data into.
+BACKENDS = {'ormos': 'pocketbase', 'cazper': 'postgresql', 'komizo': 'pocketbase',
+            'gdam': 'pocketbase', 'termcade': 'pocketbase', 'astry': 'pocketbase'}
+
+# The application half of a PostgreSQL drill is product-owned by nature: only
+# the product knows which variable carries its DSN and where it keeps blobs.
+#
+# The DSN arrives as a FILE, never as an env value: restored_database writes
+# one 0600 file per restored role, and a live credential in an --env-file is
+# one `docker inspect` away from a log. Blobs get their own tmpfs because the
+# serving path stats the directory rather than creating it -- under /tmp it
+# would not exist, and the API would refuse to start for the wrong reason.
+POSTGRES_APPS = {
+    'cazper': {
+        'runtime_role': 'cazper_runtime',
+        'dsn_file': '/run/secrets/database.url',
+        'dsn_variable': 'CAZPER_DATABASE_URL_FILE',
+        'blobs': '/blobs',
+        'api_port': 8080,
+        'health_path': '/health',
+        'root': '/srv/public/app',
+        'env': {'CAZPER_API_ADDR': ':8080', 'CAZPER_BLOB_DIRECTORY': '/blobs',
+                'CAZPER_DEV': '', 'OPENAI_API_KEY': '', 'CLERK_SECRET_KEY': ''},
+    },
+}
+
+
+def probe_endpoint(docker_run, watched, url, timeout=175):
+    """Poll `url` from inside the watched container's network namespace.
+
+    The namespace is the isolated one the store was started in, so nothing
+    here is reachable from the host or from any other container.
+    """
+    deadline = time.monotonic()+timeout
+    while time.monotonic() < deadline:
+        if not json.loads(docker('inspect', watched))[0]['State']['Running']:
+            raise RuntimeError('restored container exited before becoming healthy')
+        try:
+            body = docker_run(url)
+            if time.monotonic() >= deadline:
+                raise TimeoutError('restore health response arrived after its deadline')
+            return body
+        except RuntimeError:
+            time.sleep(1)
+    raise TimeoutError('restored service did not become healthy before its deadline')
+
+
+def postgres_drill(project, export, key, pull=False):
+    """Restore an authenticated snapshot into PostgreSQL and boot the product on it.
+
+    Proves the same three things the PocketBase drill does -- the data comes
+    back, the API serves against it, and the release's frontend artifact is a
+    real document -- for a product whose store is PostgreSQL.
+    """
+    snapshot = helper('snapshot')
+    receiver = helper('receive-backup')
+    recovery = helper('postgres-recovery')
+    config = POSTGRES_APPS[project]
+    owner = {'gdam': 'aviorstudio', 'termcade': 'aviorstudio', 'astry': 'astrylogical'}.get(project, 'nicodes')
+    containers = []
+    report = {'project': project, 'network': 'none; shared isolated loopback only', 'published_ports': []}
+    memory = Path('/proc/meminfo')
+    if memory.exists():
+        available = re.search(r'^MemAvailable:\s+(\d+) kB$', memory.read_text(), re.M)
+        if not available or int(available[1]) < 768 * 1024:
+            raise ValueError('restore drill requires 768 MiB of available host memory')
+    with tempfile.TemporaryDirectory(prefix=f'{project}-restore-drill-') as directory:
+        root = Path(directory)
+        receiver.receive(export, root/'encrypted')
+        payload = root/'payload'
+        payload.mkdir(mode=0o700)
+        # unseal authenticates the envelope, validates the payload against its
+        # manifest and, for this backend, checks the PostgreSQL engine image
+        # against the receipt. It reads the backend from the envelope rather
+        # than being told, so an envelope of the other kind must be refused
+        # here: booting a pocketbase snapshot through this path would find no
+        # manifest and fail later, and further from the cause.
+        evidence = snapshot.unseal(root/'encrypted', key, payload)
+        if evidence.get('backend') != 'postgresql':
+            raise ValueError('this product restores into PostgreSQL; the envelope is not a PostgreSQL snapshot')
+        # The engine reference in a PostgreSQL envelope is the POSTGRES image,
+        # not a product image, so the product revision comes from the
+        # authenticated manifest rather than from a tag.
+        manifest = evidence['postgresql']
+        if manifest['project'] != project:
+            raise ValueError('authenticated snapshot belongs to another product')
+        revision = manifest['revision']
+        if not re.fullmatch(r'[a-f0-9]{40}', revision):
+            raise ValueError('authenticated snapshot does not name an exact product revision')
+        # The components come from the manifest, not from a list here: it is
+        # the authenticated statement of which images belong to this snapshot,
+        # and validate_manifest has already bound each reference to this
+        # project and revision.
+        images = {}
+        for component, declared in sorted(manifest['images'].items()):
+            image = f'ghcr.io/{owner}/{project}-{component}:{revision}'
+            if declared['reference'] != image:
+                raise ValueError('authenticated snapshot declares a different application image')
+            if pull:
+                # Authenticate the encrypted project/revision before pulling.
+                # Registry credentials stay on the host, outside every clone.
+                docker('pull', '--quiet', image, timeout=180)
+            images[component] = json.loads(docker('image', 'inspect', image))[0]['Id']
+            # A tag is mutable; the snapshot named a digest. Booting whatever
+            # currently answers to the tag would make the drill prove nothing
+            # about the release the data came from.
+            if images[component] != declared['image_id']:
+                raise ValueError('application image differs from authenticated snapshot metadata')
+        api_component = 'service' if 'service' in images else 'api'
+        if 'gate' not in images or api_component not in images:
+            raise ValueError('authenticated snapshot is missing an application or frontend image')
+        uid = os.getuid() if os.getuid() else 65534
+        prefix = project+'-restore-'+secrets.token_hex(8)
+        common = ['--read-only', '--user', f'{uid}:{uid}', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
+                  '--cpus=1', '--pids-limit=128', '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m']
+        try:
+            with recovery.restored_database(payload, project, revision, pull=pull) as restored:
+                store = restored['container']
+                dsn = restored['credentials'][config['runtime_role']]
+                netns = ['--network', f'container:{store}']
+
+                def wget(url):
+                    name = prefix+'-probe'
+                    containers.append(name)
+                    try:
+                        return docker('run', '--name', name, *netns, *common, '--memory=64m',
+                                      '--entrypoint', '/usr/bin/wget', images['gate'],
+                                      '-qO-', '-T', '3', url, timeout=15)
+                    finally:
+                        docker('rm', '-f', '-v', name)
+                        containers.remove(name)
+
+                environment = root/'clone.env'
+                environment.write_text(''.join(f'{name}={value}\n' for name, value in
+                                               {**config['env'], config['dsn_variable']: config['dsn_file']}.items()))
+                environment.chmod(0o600)
+                api = prefix+'-api'
+                containers.append(api)
+                docker('run', '-d', '--name', api, *netns, *common, '--memory=192m',
+                       '--tmpfs', f'{config["blobs"]}:rw,noexec,nosuid,uid={uid},gid={uid},mode=0700,size=32m',
+                       '--mount', f'type=bind,src={dsn},dst={config["dsn_file"]},readonly',
+                       '--env-file', str(environment), images[api_component])
+                probe_endpoint(wget, api, f'http://127.0.0.1:{config["api_port"]}{config["health_path"]}', timeout=120)
+                if not json.loads(docker('inspect', api))[0]['State']['Running']:
+                    raise RuntimeError('restored API did not remain running')
+                gate = prefix+'-gate'
+                containers.append(gate)
+                docker('run', '-d', '--name', gate, *netns, *common, '--memory=96m',
+                       '--entrypoint', '/usr/bin/caddy', images['gate'],
+                       'file-server', '--root', config['root'], '--listen', '127.0.0.1:8088')
+                html = probe_endpoint(wget, gate, 'http://127.0.0.1:8088/', timeout=45)
+                if '<html' not in html.lower() or '<script' not in html.lower():
+                    raise ValueError('the restored frontend artifact did not serve an application document')
+                report.update({'revision': revision, 'images': {**images, 'engine': restored['engine']},
+                               'archive_sha256': evidence['archive_sha256'], 'backend': 'postgresql',
+                               'database_integrity': 'ok', 'database_restore': restored['database_restore'],
+                               'api_boot': 'passed', 'frontend_artifact': 'passed'})
+        finally:
+            failed = []
+            for name in reversed(containers):
+                try:
+                    docker('rm', '-f', '-v', name)
+                except RuntimeError:
+                    failed.append(name)
+            if failed:
+                raise RuntimeError('isolated restore container cleanup failed')
+    report['cleanup'] = 'passed'
+    return report
+
+
 def drill(project, export, key, pull=False):
+    if BACKENDS[project] == 'postgresql':
+        return postgres_drill(project, export, key, pull)
     snapshot = helper('snapshot')
     receiver = helper('receive-backup')
     config = {
