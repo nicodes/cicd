@@ -14,7 +14,33 @@ import unittest
 
 ROOT = Path(__file__).parents[1]
 WORKFLOWS = ROOT/'.github'/'workflows'
-HELPER_REF = '644d2ade854e6d8cd8f06fe2895664162379f024'
+# The helper checkouts are pinned, and every one of them names the SAME
+# commit -- but which commit is decided when a release is cut, not here.
+#
+# This used to be the literal SHA, which made every release fail its own
+# tests: scripts/release.sh repins the workflows, and the assertion said the
+# pin must still be the one from before. That is the bump-along coupling in
+# test form. The property worth holding is that the pins are full SHAs and
+# that they agree with each other; the value is the release's to choose.
+HELPER_REF = re.compile(r'^[0-9a-f]{40}$')
+
+
+def helper_refs():
+    """Every nicodes/cicd self-checkout ref across the reusable workflows.
+
+    Parsed with this file's own load(), so the workflows are read exactly as
+    the rest of these tests read them rather than by a second parser that
+    could disagree about the same document.
+    """
+    found = {}
+    for path in sorted(WORKFLOWS.glob('*.yml')):
+        document = load(path.name) or {}
+        for job in (document.get('jobs') or {}).values():
+            for step in (job.get('steps') or []):
+                with_ = step.get('with') or {}
+                if with_.get('repository') == 'nicodes/cicd' and 'ref' in with_:
+                    found.setdefault(str(with_['ref']), []).append(path.name)
+    return found
 USE_KEY = re.compile(r'(?:^|[-\s])uses:\s*(?P<value>.+?)\s*$')
 SHA_PIN = re.compile(r'^[\w.-]+(?:/[\w.-]+)+@[0-9a-f]{40}\s+#\s*v?\d[\w.+-]*$')
 
@@ -90,7 +116,7 @@ class VulnerabilityScanWorkflowTests(unittest.TestCase):
         self.assertEqual(self.report['if'], 'failure()')
         self.assertEqual(self.report['permissions'], {'contents': 'read', 'issues': 'write'})
         checkout = checkout_of(self.report, 'nicodes/cicd')
-        self.assertEqual(checkout['with']['ref'], HELPER_REF)
+        self.assertRegex(checkout['with']['ref'], HELPER_REF)
         self.assertEqual(checkout['with']['path'], '.cicd')
         self.assertIs(checkout['with']['persist-credentials'], False)
         self.assertEqual(checkout['with']['sparse-checkout'], 'helpers/')
@@ -150,7 +176,7 @@ class ToolWatchWorkflowTests(unittest.TestCase):
 
     def test_failure_reporting_uses_cicds_own_helper_at_the_pinned_revision(self):
         checkout = checkout_of(self.watch, 'nicodes/cicd')
-        self.assertEqual(checkout['with']['ref'], HELPER_REF)
+        self.assertRegex(checkout['with']['ref'], HELPER_REF)
         self.assertEqual(checkout['with']['sparse-checkout'], 'helpers/')
         failure = next(step for step in self.watch['steps'] if step.get('if') == 'failure()')
         self.assertEqual(failure['run'], 'python3 .cicd/helpers/report-failure.py')
@@ -220,3 +246,30 @@ class ToolMaintenanceRenameTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HelperCheckoutPins(unittest.TestCase):
+    """Every self-checkout names one commit, and they all name the same one.
+
+    The README's bump-along rule says "never bump one checkout without the
+    other (a test enforces they stay equal)" -- that enforcement only covered
+    backup.yml's two. Across the whole file set they were NOT equal: backup
+    sat on one revision while tools and vuln sat on another, 10 commits
+    apart, and nothing said so.
+    """
+
+    def test_every_helper_checkout_is_pinned_to_one_full_sha(self):
+        refs = helper_refs()
+        self.assertTrue(refs, 'no nicodes/cicd self-checkouts found -- has the shape changed?')
+        for ref in refs:
+            self.assertRegex(ref, HELPER_REF, 'helper checkouts pin a full commit, never a branch or tag')
+
+    def test_all_helper_checkouts_name_the_same_commit(self):
+        refs = helper_refs()
+        self.assertEqual(
+            len(refs), 1,
+            'helper checkouts disagree, so one workflow runs older helpers than another: '
+            + '; '.join(f'{ref[:8]} in {", ".join(files)}' for ref, files in sorted(refs.items()))
+            + ' -- cut a release (docs/releases.md) rather than bumping by hand',
+        )
+
