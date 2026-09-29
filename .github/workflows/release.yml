@@ -1,7 +1,21 @@
 name: Release
 
-# Two manual stages; see docs/releases.md. This workflow never moves a tag and
-# never pushes to main.
+# The publish half. See docs/releases.md.
+#
+# PREPARE IS NOT HERE, and cannot be. The candidate commit edits files under
+# .github/workflows, and GITHUB_TOKEN is refused when it tries to push one:
+#
+#   refusing to allow a GitHub App to create or update workflow
+#   `.github/workflows/backup.yml` without `workflows` permission
+#
+# That permission is not grantable to the job token; it needs a PAT or an App
+# credential. komizo-actions runs its prepare in Actions because what it
+# rewrites is */action.yml, which is not a workflow file -- the same design
+# does not transfer. So prepare runs on the operator's machine, with the
+# operator's own push rights, and this workflow does the half that only needs
+# to write a tag.
+#
+# This workflow never moves a tag and never pushes to main.
 #
 # The pin rewriting and the input checking live in scripts/release.sh, not
 # here. They are the parts with sharp edges, they are written down once, and a
@@ -16,24 +30,17 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      stage:
-        description: prepare (make the candidate) or publish (tag a merged one)
-        required: true
-        type: choice
-        options: [prepare, publish]
       version:
         description: vX.Y.Z — unused, and identical across both stages
         required: true
         type: string
       sha:
-        description: >
-          prepare: the full current main SHA to cut from.
-          publish: the full merge commit of the candidate PR.
+        description: the full merge commit of the candidate PR
         required: true
         type: string
       pr:
-        description: publish only — the merged candidate PR number
-        required: false
+        description: the merged candidate PR number
+        required: true
         type: string
 
 permissions: {}
@@ -43,25 +50,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    if: inputs.stage == 'prepare'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Prepare the candidate branch and print the operator PR command
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-          SOURCE_SHA: ${{ inputs.sha }}
-        run: sh scripts/release.sh prepare "$VERSION" "$SOURCE_SHA" --push
-
   publish:
-    if: inputs.stage == 'publish'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

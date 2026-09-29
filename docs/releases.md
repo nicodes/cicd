@@ -34,12 +34,27 @@ Keeping the first two in agreement is the product's job, checked by
 
 ## Cutting one
 
-**1. Prepare.** Choose an unused `vX.Y.Z` and the full current `main` SHA.
-Both are explicit and must not change on a retry.
+**1. Prepare — on your own machine, not in Actions.** Choose an unused
+`vX.Y.Z` and the full current `main` SHA. Both are explicit and must not
+change on a retry.
 
 ```sh
-sh scripts/release.sh prepare v0.1.0 <full-current-main-sha>
+sh scripts/release.sh prepare v0.1.0 <full-current-main-sha> --push
 ```
+
+This stage cannot run in Actions. The candidate edits files under
+`.github/workflows`, and `GITHUB_TOKEN` is refused when it pushes one:
+
+```
+refusing to allow a GitHub App to create or update workflow
+`.github/workflows/backup.yml` without `workflows` permission
+```
+
+That permission is not grantable to the job token — it needs a PAT or an App
+credential, which is a standing push-to-any-workflow secret this repository
+does not need to hold. komizo-actions runs its prepare in Actions because
+what it rewrites is `*/action.yml`, which is not a workflow file; the same
+design does not transfer here.
 
 It creates `release/vX.Y.Z` with one deterministic commit that repins every
 `nicodes/cicd` self-checkout to the source commit, and prints the candidate,
@@ -52,7 +67,7 @@ the normal protected path. Do not edit the candidate.
 
 **3. Publish.** Wait for CI to pass on the exact merge commit, then dispatch
 the **Release** workflow with the same version, that merged SHA, and the PR
-number. It verifies the PR was merged into this repository, that CI succeeded
+number. This half only writes a tag, so the job token is enough. It verifies the PR was merged into this repository, that CI succeeded
 on that exact commit, and that the tree still matches what `prepare`
 generated — a change introduced during merge fails closed. Then it creates
 the annotated tag and the GitHub release.
