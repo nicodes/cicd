@@ -12,6 +12,10 @@ import re
 import subprocess
 import unittest
 
+from vendored import skip_module_if_vendored
+
+skip_module_if_vendored("cicd-only: this repository's own workflows and their self-checkout pins")
+
 ROOT = Path(__file__).parents[1]
 WORKFLOWS = ROOT/'.github'/'workflows'
 
