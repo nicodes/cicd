@@ -52,6 +52,25 @@ class VendorSnapshot(unittest.TestCase):
             self.assertEqual(list(Path(root).iterdir()), [destination])
             vendor.verify_existing(destination)
 
+    def test_the_product_owned_pin_record_survives_an_update(self):
+        """ACTION-PINS.json is product-owned and lives in the snapshot directory.
+
+        helpers/pins.mjs reads it from scripts/engineering/ACTION-PINS.json, so
+        a vendoring tool that refused it made every product un-revendorable --
+        and one that merely tolerated it would still have deleted it, because
+        install() replaces the directory wholesale rather than merging into it.
+        """
+        with tempfile.TemporaryDirectory() as root, patch.object(vendor, 'git', side_effect=self.source_git):
+            destination = self.destination(root)
+            pins = destination/'ACTION-PINS.json'
+            pins.write_text('{"actions": {"actions/checkout": "'+'e'*40+'"}}')
+            vendor.install('reviewed-local-source', 'b'*40, destination)
+            self.assertTrue(pins.is_file(), 'the update deleted the product-owned pin record')
+            self.assertEqual(json.loads(pins.read_text())['actions']['actions/checkout'], 'e'*40)
+            # And the snapshot itself still updated around it.
+            self.assertEqual((destination/'helpers/new.py').read_bytes(), b'new helper\n')
+            self.assertFalse((destination/'helpers/old.py').exists())
+
     def test_local_changes_unlisted_files_and_symlinks_are_preserved_and_refused(self):
         for change in ('modified', 'extra', 'symlink', 'directory'):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as root:

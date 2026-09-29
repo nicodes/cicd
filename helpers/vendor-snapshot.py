@@ -13,6 +13,15 @@ import tempfile
 REPOSITORY = 'https://github.com/nicodes/cicd'
 FILE = re.compile(r'(helpers|tests)/[\w.-]+', re.ASCII)
 
+# Product-owned files that live in the snapshot directory and are NOT part of
+# the snapshot: this tool must leave them exactly as it found them.
+#
+# ACTION-PINS.json is the fleet action-pin record, and helpers/pins.mjs looks
+# for it at scripts/engineering/ACTION-PINS.json -- so a vendored helper
+# requires a file this vendoring tool refused to tolerate, which made every
+# product in the fleet un-revendorable. Neither half was wrong on its own.
+UNMANAGED = {'SOURCE.json', 'ACTION-PINS.json'}
+
 
 def git(repository, *arguments):
     return subprocess.run(['git', '--no-replace-objects', '-C', str(repository),
@@ -74,7 +83,7 @@ def verify_existing(destination):
         if not path.is_file():
             raise ValueError('destination contains an unexpected directory or special file')
         actual.add(relative)
-    if actual != set(expected) | {'SOURCE.json'}:
+    if actual - UNMANAGED != set(expected):
         raise ValueError('destination contains unlisted files; preserve them before updating')
 
 
@@ -94,6 +103,13 @@ def install(repository, revision, destination):
             path.write_bytes(data)
             path.chmod(mode)
         (stage / 'SOURCE.json').write_text(json.dumps(source, indent=2) + '\n')
+        # Carry product-owned files across the swap. The stage replaces the
+        # destination wholesale, so merely tolerating an unmanaged file in
+        # verify_existing would still have an update DELETE it.
+        for name in sorted(UNMANAGED - {'SOURCE.json'}):
+            existing = destination / name
+            if existing.is_file() and not existing.is_symlink():
+                shutil.copy2(existing, stage / name)
         verify_existing(stage)
         # Recheck after preparing the new tree. Operators must not edit the
         # destination concurrently; this is maintenance tooling, not a file lock.
