@@ -49,6 +49,7 @@ const workflows = walk('.github').filter(file => /\.ya?ml$/.test(file));
 assert.ok(workflows.some(file => file.includes('/workflows/')), 'no workflows to check');
 const komizoActions = 'nicodes/komizo-actions';
 const komizoUses = [];
+const cicdUses = [];
 
 // Misspelling guard, additive and network-free. A one-byte typo in a pinned
 // reference still satisfies the full-SHA rule but resolves to no repository,
@@ -107,6 +108,7 @@ for (const file of workflows) {
           `${file}: org '${owner}' is within a two-byte edit of portfolio org '${closest}' — likely a misspelling: ${value.uses}`);
       }
       if (value.uses.startsWith(`${komizoActions}/`)) komizoUses.push({ file, uses: value.uses });
+      if (value.uses.startsWith('nicodes/cicd/')) cicdUses.push({ file, uses: value.uses });
     }
     Object.values(value).forEach(inspect);
   }
@@ -116,6 +118,37 @@ for (const file of workflows) {
 // products can never run different revisions of the same shared action. The
 // record is copied verbatim across products; only peeled commit SHAs are
 // recorded (never annotated tag-object SHAs, which also match the 40-hex rule).
+// This product consumes nicodes/cicd TWICE, and the two must name the same
+// commit.
+//
+//   1. helpers/ and tests/ are vendored into scripts/engineering, recorded in
+//      SOURCE.json with a revision and a hash per file.
+//   2. its reusable workflows are called: nicodes/cicd/.github/workflows/
+//      backup.yml@<sha>
+//
+// Nothing tied those together, and they drifted apart in most of the
+// portfolio: products ran helper code from one revision of that repository
+// while their backup and vulnerability workflows came from another, in one
+// case from three at once. Neither half is wrong on its own, which is
+// exactly why it went unnoticed -- "which revision of cicd is this product
+// on" simply had no answer.
+//
+// Bump both together. Re-vendor at the release you are moving to (see
+// nicodes/cicd docs/releases.md) and update every workflow pin to the same
+// commit in the same pull request.
+for (const { file, uses } of cicdUses) {
+  const [, sha] = /^nicodes\/cicd\/[^@]+@([^\s]+)$/.exec(uses) ?? [];
+  assert.ok(sha, `${file}: could not read a ref from '${uses}'`);
+  assert.match(sha, /^[a-f0-9]{40}$/,
+    `${file}: pin nicodes/cicd by full commit SHA, not '${sha}' — a tag can be deleted and recreated, and SOURCE.json records a commit, so a tag here cannot be compared with it`);
+  // Name the CALLED workflow, not just the calling file. A product can call
+  // several from one file, and "ci.yml disagrees" does not say which line to
+  // change.
+  const called = uses.slice('nicodes/cicd/'.length).split('@')[0];
+  assert.equal(sha, snapshot.revision,
+    `${file}: calls ${called} at ${sha.slice(0, 8)} but this product vendors ${snapshot.revision.slice(0, 8)} — one product, two revisions of the same repository. Re-vendor and repin together.`);
+}
+
 const pinRecord = 'scripts/engineering/ACTION-PINS.json';
 const pinRecordPath = path.join(snapshotRoot, 'ACTION-PINS.json');
 if (komizoUses.length > 0) {
