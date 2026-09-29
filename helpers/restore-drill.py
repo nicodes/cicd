@@ -41,7 +41,7 @@ def docker(*args, input=None, timeout=60):
 # two halves of the drill share the envelope, the image authentication and the
 # frontend check, and differ only in what they boot the data into.
 BACKENDS = {'ormos': 'pocketbase', 'cazper': 'postgresql', 'komizo': 'pocketbase',
-            'gdam': 'pocketbase', 'termcade': 'pocketbase', 'astry': 'pocketbase'}
+            'gdam': 'pocketbase', 'termcade': 'postgresql', 'astry': 'pocketbase'}
 
 # The application half of a PostgreSQL drill is product-owned by nature: only
 # the product knows which variable carries its DSN and where it keeps blobs.
@@ -62,6 +62,22 @@ POSTGRES_APPS = {
         'root': '/srv/public/app',
         'env': {'CAZPER_API_ADDR': ':8080', 'CAZPER_BLOB_DIRECTORY': '/blobs',
                 'CAZPER_DEV': '', 'OPENAI_API_KEY': '', 'CLERK_SECRET_KEY': ''},
+    },
+    'termcade': {
+        'runtime_role': 'termcade_runtime',
+        'dsn_file': '/run/secrets/database.url',
+        'dsn_variable': 'RUNTIME_DATABASE_URL_FILE',
+        'api_port': 8080,
+        'health_path': '/healthz',
+        'root': '/srv/public/app',
+        # No blob volume: termcade's packages live in the database and on the
+        # gate, so the API needs nothing writable beyond /tmp.
+        'env': {'TERMCADE_API_ADDR': ':8080', 'TERMCADE_ENVIRONMENT': 'development',
+                'TERMCADE_PROXY_HOPS': '2', 'TERMCADE_COOKIE_SECURE': 'off',
+                'TERMCADE_RATE_LIMITS': 'off',
+                'TERMCADE_ALLOWED_ORIGINS': 'http://127.0.0.1:8088',
+                'CLERK_SECRET_KEY': 'sk_test_restore_verification',
+                'CLERK_AUTHORIZED_PARTIES': 'http://127.0.0.1:8088'},
     },
 }
 
@@ -177,8 +193,12 @@ def postgres_drill(project, export, key, pull=False):
                 environment.chmod(0o600)
                 api = prefix+'-api'
                 containers.append(api)
-                docker('run', '-d', '--name', api, *netns, *common, '--memory=192m',
-                       '--tmpfs', f'{config["blobs"]}:rw,noexec,nosuid,uid={uid},gid={uid},mode=0700,size=32m',
+                # A blob volume only for a product that keeps files outside
+                # the database. The API stats that directory rather than
+                # creating it, so it has to be a mount, not a path in /tmp.
+                blobs = ['--tmpfs', f'{config["blobs"]}:rw,noexec,nosuid,uid={uid},gid={uid},mode=0700,size=32m'] \
+                    if config.get('blobs') else []
+                docker('run', '-d', '--name', api, *netns, *common, '--memory=192m', *blobs,
                        '--mount', f'type=bind,src={dsn},dst={config["dsn_file"]},readonly',
                        '--env-file', str(environment), images[api_component])
                 probe_endpoint(wget, api, f'http://127.0.0.1:{config["api_port"]}{config["health_path"]}', timeout=120)
