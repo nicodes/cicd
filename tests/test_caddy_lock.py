@@ -46,6 +46,44 @@ class CaddyLock(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(AssertionError):
                 self.assert_secure_lock(changed, self.sums)
 
+    # GO-2026-6508: the OpenTelemetry gRPC log exporter ignores the TLS
+    # certificates given in the environment, bypassing mTLS and certificate
+    # pinning. Fixed in v0.21.0, and reachable in the built binary -- it broke
+    # every product vendoring this lock on the day it was published.
+    #
+    # THE WHOLE FAMILY, not just the exporter that was named. otlploggrpc,
+    # otlploghttp and stdoutlog release together against one otel/log and one
+    # sdk/log, and the first repair here moved the exporter alone: it left two
+    # of them a release behind their own sdk, which is a version skew nobody
+    # chose and the next advisory would have found again. A floor per module,
+    # so an upgrade is always allowed and a downgrade never is.
+    OTEL_LOG_FLOOR = {
+        'go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc': (0, 21, 0),
+        'go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp': (0, 21, 0),
+        'go.opentelemetry.io/otel/exporters/stdout/stdoutlog': (0, 21, 0),
+        'go.opentelemetry.io/otel/log': (0, 21, 0),
+        'go.opentelemetry.io/otel/sdk/log': (0, 21, 0),
+    }
+
+    def assert_otel_log_floor(self, mod):
+        for module, floor in self.OTEL_LOG_FLOOR.items():
+            versions = re.findall(rf'^\s*{re.escape(module)}\s+(\S+)', mod, re.M)
+            self.assertEqual(len(versions), 1, f'{module}: expected exactly one pin')
+            release = re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', versions[0])
+            self.assertIsNotNone(release, f'{module}: require an exact stable release')
+            self.assertGreaterEqual(tuple(map(int, release.groups())), floor,
+                                    f'{module}: GO-2026-6508 needs at least v0.21.0')
+
+    def test_locked_otel_log_exporters_are_past_the_tls_bypass(self):
+        self.assert_otel_log_floor(self.mod)
+
+    def test_an_otel_log_module_left_behind_is_rejected(self):
+        for module in self.OTEL_LOG_FLOOR:
+            changed = re.sub(rf'(^\s*{re.escape(module)}\s+)\S+',
+                             lambda match: match[1] + 'v0.19.0', self.mod, flags=re.M)
+            with self.subTest(module=module), self.assertRaises(AssertionError):
+                self.assert_otel_log_floor(changed)
+
     def test_missing_or_inconsistent_repair_sums_are_rejected(self):
         # Use the repair release fixture even after the live lock advances.
         mod = f'require (\n\t{MODULE} v1.83.2\n)\n'
