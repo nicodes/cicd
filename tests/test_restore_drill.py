@@ -46,7 +46,9 @@ class RestoreBoundaries(unittest.TestCase):
             self.assertNotIn(secret, str(raised.exception))
 
     def test_new_product_backup_namespace_is_authenticated_before_any_pull(self):
-        for project, owner, component in [('gdam','aviorstudio','db'), ('termcade','aviorstudio','db'), ('astry','astrylogical','pb')]:
+        # termcade is absent deliberately: it restores into PostgreSQL now,
+        # and PostgresRestoreBoundaries covers the same guards for that path.
+        for project, owner, component in [('gdam','aviorstudio','db'), ('astry','astrylogical','pb')]:
             evidence = {'image_reference': f'ghcr.io/nicodes/{project}-{component}:'+'a'*40, 'image_id':'sha256:'+'b'*64}
             snapshot = SimpleNamespace(unseal=lambda *_: evidence)
             receiver = SimpleNamespace(receive=lambda *_: None)
@@ -87,9 +89,17 @@ class PostgresRestoreBoundaries(unittest.TestCase):
         with patch.object(drill, 'helper', helpers.get), patch.object(drill, 'docker', docker or (lambda *a, **k: '')):
             return drill.drill(project, Path('/unused'), Path('/unused'), pull=True)
 
-    def test_cazper_takes_the_postgresql_path(self):
-        self.assertEqual(drill.BACKENDS['cazper'], 'postgresql')
+    def test_the_postgresql_products_take_the_postgresql_path(self):
+        for project in ('cazper', 'termcade'):
+            self.assertEqual(drill.BACKENDS[project], 'postgresql')
+            self.assertIn(project, drill.POSTGRES_APPS)
         self.assertEqual(drill.BACKENDS['ormos'], 'pocketbase')
+        # Every PostgreSQL product needs the settings the drill reads, and a
+        # missing one would surface as a KeyError deep inside a container run.
+        for project, config in drill.POSTGRES_APPS.items():
+            self.assertEqual(drill.BACKENDS[project], 'postgresql', project)
+            for key in ('runtime_role', 'dsn_file', 'dsn_variable', 'api_port', 'health_path', 'root', 'env'):
+                self.assertIn(key, config, f'{project} is missing {key}')
 
     def test_a_pocketbase_envelope_is_refused_by_a_postgresql_product(self):
         # No 'backend' key at all is how a PocketBase envelope reads.
