@@ -62,3 +62,34 @@ class ImageVerdict(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UpstreamExemption(unittest.TestCase):
+    """--upstream accepts a binary we did not build. It must match exactly.
+
+    The exemption is the only way a reached advisory does not fail the build,
+    so the cost of getting the comparison wrong runs both ways: too loose and
+    a binary we DID build stops being checked; too strict and the exemption
+    silently does nothing while the command line reads as though it works.
+    """
+
+    def test_a_tar_member_matches_the_absolute_path_an_operator_writes(self):
+        # tar gives "usr/bin/caddy"; the operator writes the path as it is
+        # inside the image. Both spellings, and the "./" form, are one path.
+        for member in ('usr/bin/caddy', './usr/bin/caddy', '/usr/bin/caddy'):
+            self.assertTrue(scanner.is_upstream(member, ['/usr/bin/caddy']), member)
+            self.assertTrue(scanner.is_upstream(member, ['usr/bin/caddy']), member)
+
+    def test_nothing_else_is_exempt(self):
+        for member in ('usr/bin/astry-api', 'usr/local/bin/caddy', 'usr/bin/caddy2',
+                       'opt/caddy', 'usr/bin/caddy/inner'):
+            self.assertFalse(scanner.is_upstream(member, ['/usr/bin/caddy']), member)
+
+    def test_no_declaration_exempts_nothing(self):
+        self.assertFalse(scanner.is_upstream('usr/bin/caddy', []))
+
+    def test_several_paths_may_be_declared(self):
+        declared = ['/usr/bin/caddy', '/usr/sbin/other']
+        self.assertTrue(scanner.is_upstream('usr/sbin/other', declared))
+        self.assertFalse(scanner.is_upstream('usr/sbin/others', declared))
+
