@@ -201,8 +201,13 @@ class ActionPinGuard(unittest.TestCase):
     def test_exact_fleet_and_distant_third_party_references_are_unaffected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            # The cicd pin matches write_product's SOURCE.json revision. This
+            # test is about the misspelling guard, not revision agreement --
+            # but a cicd call is now checked against what the product
+            # vendors, so an arbitrary SHA here would fail for an unrelated
+            # reason and this test would stop testing what it says it does.
             write_product(root, steps=['aviorstudio/gdam-actions/install@'+V3,
-                                       f'nicodes/cicd/.github/workflows/deployed.yml@{V3}',
+                                       f'nicodes/cicd/.github/workflows/deployed.yml@{"a" * 40}',
                                        'nico/some-action@'+V3,  # three edits from nicodes
                                        'docker/login-action@'+V1])
             result = run_pins(root)
@@ -441,3 +446,58 @@ class ActionPinUpdaterEndToEnd(unittest.TestCase):
             self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
             pins = json.loads((root / 'scripts/engineering/ACTION-PINS.json').read_text())['pins']
             self.assertEqual(pins['connect']['sha'], V8)
+
+
+class CicdRevisionAgreement(unittest.TestCase):
+    """A product consumes nicodes/cicd twice; both must name one commit.
+
+    Its helpers are vendored (SOURCE.json.revision) and its reusable
+    workflows are called (@sha). Nothing tied those together, and they
+    drifted apart across most of the portfolio -- products running helper
+    code from one revision while their backup and vulnerability workflows
+    came from another, in one case from three at once.
+
+    Neither half is wrong on its own, which is why nobody saw it: the
+    question "which revision of cicd is this product on" had no answer.
+    """
+
+    REVISION = 'a' * 40
+
+    def product(self, steps):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        write_product(root, steps=steps)
+        stage(root)
+        return run_pins(root)
+
+    def test_a_workflow_pinned_to_the_vendored_revision_passes(self):
+        result = self.product([f'nicodes/cicd/.github/workflows/vuln.yml@{self.REVISION}'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_workflow_pinned_elsewhere_is_refused(self):
+        result = self.product([f'nicodes/cicd/.github/workflows/vuln.yml@{"b" * 40}'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('two revisions of the same repository', result.stderr)
+
+    def test_every_call_is_checked_not_just_the_first(self):
+        # fieldsofrevik pinned three different cicd revisions across its
+        # workflows. Checking one would have reported it clean.
+        result = self.product([
+            f'nicodes/cicd/.github/workflows/vuln.yml@{self.REVISION}',
+            f'nicodes/cicd/.github/workflows/backup.yml@{"c" * 40}',
+        ])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('backup.yml', result.stderr + result.stdout)
+
+    def test_a_tag_is_refused_even_though_it_is_a_valid_ref(self):
+        # SOURCE.json records a commit, so a tag here cannot be compared with
+        # it at all -- and three products pin komizo-actions by tag today,
+        # so this is a shape the portfolio actually produces.
+        result = self.product(['nicodes/cicd/.github/workflows/vuln.yml@v0.1.0'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('full commit SHA', result.stderr)
+
+    def test_a_product_that_calls_no_cicd_workflow_is_unaffected(self):
+        result = self.product([CHECKOUT])
+        self.assertEqual(result.returncode, 0, result.stderr)

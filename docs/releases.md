@@ -74,6 +74,10 @@ the annotated tag and the GitHub release.
 
 ## Consuming one
 
+`helpers/pins.mjs` enforces the half that belongs to the product: every
+`nicodes/cicd/...@<sha>` in its workflows must equal its `SOURCE.json`
+revision. Bump both in one pull request.
+
 Pin the **commit**, with the version in a trailing comment:
 
 ```yaml
