@@ -98,14 +98,22 @@ jobs:
             --commit "$MERGED_SHA" --event push --limit 1 --json conclusion -q '.[0].conclusion // "none"')
           [ "$ci" = success ] || { echo "::error::CI on $MERGED_SHA is '$ci', not success"; exit 1; }
 
-          # And it must still say what prepare generated. A change introduced
-          # during merge fails closed rather than shipping unreviewed.
-          source=$(git log -1 --format=%B "$MERGED_SHA" | sed -n 's/^release .*: pin helper checkouts to \([0-9a-f]\{40\}\)$/\1/p' | head -1)
-          [ -n "$source" ] || { echo "::error::$MERGED_SHA is not a release candidate commit"; exit 1; }
-          left=$(git grep -hoE '^[[:space:]]*ref:[[:space:]]*[0-9a-f]{40}' "$MERGED_SHA" -- .github/workflows |
-            awk '{print $2}' | sort -u | grep -v "^$source$" || true)
-          [ -z "$left" ] || { echo "::error::self-checkout pins in the merged tree are not $source:"; echo "$left"; exit 1; }
-          echo "verified: PR #$PR merged as $MERGED_SHA, CI green, helpers pinned to $source"
+          # And the merged TREE must carry the property prepare exists to
+          # create: every cicd self-checkout pinned to one full commit.
+          #
+          # Read from the tree, not from the commit message. The first
+          # version parsed the candidate's subject out of $MERGED_SHA, which
+          # is only there for a squash -- merging the PR with a merge commit
+          # gave "Merge pull request #62 from ..." and the gate refused a
+          # perfectly good release. What is being verified is the content, so
+          # the content is what it reads.
+          pins=$(git grep -hoE '^[[:space:]]*ref:[[:space:]]*[0-9a-f]{40}' "$MERGED_SHA" -- .github/workflows |
+            awk '{print $2}' | sort -u)
+          count=$(printf '%s\n' "$pins" | grep -c . || true)
+          [ "$count" = 1 ] || {
+            echo "::error::the merged tree has $count distinct helper pins, want exactly 1:"
+            printf '%s\n' "$pins"; exit 1; }
+          echo "verified: PR #$PR merged as $MERGED_SHA, CI green, helpers pinned to $pins"
 
       - name: Tag and release
         shell: bash
