@@ -18,6 +18,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts/release.sh"
+
+# These tests are about THIS repository, and helpers/ and tests/ are vendored
+# wholesale into every product. There, ROOT is the product"s
+# scripts/engineering directory: scripts/release.sh does not exist, and the
+# workflows on disk are the product"s own, which have no cicd self-checkouts
+# to agree about. Running them in a product asserts things that are not its
+# business and fails for reasons it cannot fix.
+#
+# SOURCE.json beside this tests/ directory is the signal: it is written by
+# vendor-snapshot.py and exists only in a consumer, never here.
+VENDORED = (ROOT / "SOURCE.json").exists()
 SHA = "b" * 40
 
 
@@ -28,6 +39,7 @@ def git(repo, *args, check=True):
     )
 
 
+@unittest.skipIf(VENDORED, "cicd-only: this repository's release script")
 class ReleasePrepare(unittest.TestCase):
     def build(self, workflow):
         """An origin plus a clone of it, with one workflow file."""
