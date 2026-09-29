@@ -69,7 +69,40 @@ def judge_report(raw):
             'database_updated': config.get('db_last_modified', 'unknown')}
 
 
-def scan(image, expected_go=None):
+def is_upstream(member, upstream):
+    """Does this image path name a binary the caller declared as upstream?
+
+    Normalised on both sides. A tar member is "usr/bin/caddy"; an operator
+    writes "/usr/bin/caddy", because that is what the path is inside the
+    image. Comparing them raw matches nothing -- and a failed match here does
+    not announce itself, it just silently applies no exemption while the
+    command line looks exactly as though it did.
+    """
+    def norm(path):
+        return '/' + path.lstrip('./').lstrip('/')
+    return norm(member) in {norm(p) for p in upstream}
+
+
+def scan(image, expected_go=None, upstream=()):
+    """Scan every Go executable in an image.
+
+    `upstream` names paths inside the image that WE DID NOT BUILD -- a binary
+    that arrived in somebody else's base image. They are still scanned and
+    still reported, and they do not fail the run.
+
+    That exemption exists because the alternative in practice is worse. The
+    gate images used to compile Caddy themselves, from a reviewed go.mod, with
+    a source overlay patching two lines of upstream to accommodate a CEL
+    release Caddy had not caught up to. It worked, and it meant every new
+    advisory against any Caddy dependency broke four repositories at once
+    until somebody re-resolved the lock by hand. Accepting the official
+    image's binary is a smaller, more honest position than maintaining a
+    private fork of a web server.
+
+    It is narrow on purpose: one path at a time, named by the caller, on the
+    caller's own line. Nothing here exempts a binary this organisation
+    compiled -- for those, a reached advisory still fails the build.
+    """
     info = json.loads(subprocess.check_output(['docker', 'image', 'inspect', image], text=True, timeout=30))
     if len(info) != 1 or not re.fullmatch(r'sha256:[a-f0-9]{64}', info[0]['Id']):
         raise ValueError('image identity is missing or ambiguous')
@@ -111,16 +144,22 @@ def scan(image, expected_go=None):
                 match = re.search(r': go(\d+\.\d+\.\d+)\b', version.stdout)
                 if not match:
                     raise ValueError(f'Go executable has an unknown compiler: {member.name}')
-                if expected_go is not None and match[1] != expected_go:
+                trusted = is_upstream(member.name, upstream)
+                if expected_go is not None and match[1] != expected_go and not trusted:
                     raise ValueError(f'{member.name}: built by Go {match[1]}, expected {expected_go}')
                 print(f'Scanning {member.name} in {identity}, built by Go {match[1]}', flush=True)
                 result = subprocess.run(['govulncheck', '-mode=binary', '-json', str(binary)],
                                         check=True, stdout=subprocess.PIPE, text=True, timeout=600)
                 verdict = judge_report(result.stdout)
                 print(json.dumps(verdict), flush=True)
-                if verdict['reached']:
+                if verdict['reached'] and not trusted:
                     raise ValueError(f'{member.name}: vulnerable linked symbols: {verdict["reached"]}')
-                found.append({'path': member.name, 'go': match[1], **verdict})
+                if verdict['reached']:
+                    # Loud, every build. An accepted advisory that stops being
+                    # mentioned is one nobody decides about again.
+                    print(f'::warning::{member.name} is an upstream binary with reached '
+                          f'advisories, accepted by --upstream: {verdict["reached"]}', flush=True)
+                found.append({'path': member.name, 'go': match[1], 'upstream': trusted, **verdict})
         if not found:
             raise ValueError('expected a runtime image containing at least one Go executable')
     return {'image': image, 'image_id': identity, 'scanned': found}
@@ -130,5 +169,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('image')
     parser.add_argument('--expected-go')
+    parser.add_argument('--upstream', action='append', default=[], metavar='PATH',
+                        help='a binary inside the image that we did not build; scanned and '
+                             'reported, never fatal. Repeat for several.')
     args = parser.parse_args()
-    print(json.dumps(scan(args.image, args.expected_go), indent=2))
+    print(json.dumps(scan(args.image, args.expected_go, args.upstream), indent=2))
