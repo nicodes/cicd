@@ -13,6 +13,10 @@ from pathlib import Path
 import subprocess
 import unittest
 
+from vendored import skip_module_if_vendored
+
+skip_module_if_vendored("cicd-only: this repository's own reusable deployed-scan workflow")
+
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT/'.github'/'workflows'/'deployed.yml'
 

@@ -3,6 +3,10 @@ import re
 from pathlib import Path
 import unittest
 
+from vendored import skip_module_if_vendored
+
+skip_module_if_vendored("cicd-only: this repository's own reusable dependabot workflow")
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / '.github/workflows/dependabot.yml'
