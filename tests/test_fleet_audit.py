@@ -15,6 +15,8 @@ import json
 import unittest
 from pathlib import Path
 
+from vendored import VENDORED
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('fleet_audit', ROOT/'helpers/fleet-audit.py')
 fleet_audit = importlib.util.module_from_spec(spec)
@@ -171,6 +173,11 @@ class ScopedComparisons(unittest.TestCase):
         self.assertIn('deploy', said[0])
 
 
+# cicd-only: FLEET.json is this repository's, and a product vendors
+# helpers/ and tests/ without it. The rest of this module tests the
+# vendored helper itself and is worth running inside a product, so the
+# skip is on this class rather than the whole file.
+@unittest.skipIf(VENDORED, "cicd-only: asserts things about cicd's own FLEET.json")
 class TheRealFleetFile(unittest.TestCase):
     def test_every_declared_product_has_a_known_profile(self):
         fleet = json.loads((ROOT/'FLEET.json').read_text())
