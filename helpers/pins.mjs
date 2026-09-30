@@ -254,4 +254,9 @@ verifyDependencyCoverage(Bun.YAML.parse(fs.readFileSync('.github/dependabot.yml'
     // that is not ours, and cannot bump a base image the caller supplies.
     // Read once, above, so one place decides.
     .filter(Boolean).filter(file => !foreignGoMods.has(file) && !fixtureDockerfiles.has(file)),
-  Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8')));
+  // Read only if it is there: a product with no Bun application carries no
+  // bun-updates workflow, and verifyDependencyCoverage refuses one that does
+  // not need it rather than one that is merely absent.
+  fs.existsSync('.github/workflows/bun-updates.yml')
+    ? Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8'))
+    : null);
