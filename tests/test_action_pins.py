@@ -307,6 +307,67 @@ class ApplicationManifestScan(unittest.TestCase):
                 stage(root)
                 self.assertNotEqual(run_pins(root).returncode, 0, version)
 
+    def test_a_go_mod_that_is_not_ours_can_say_so(self):
+        """A repository can hold a go.mod it must not edit.
+
+        fieldsofrevik vendors github.com/tianon/gosu at a pinned revision,
+        declaring go 1.20, and holding it to this product's toolchain would
+        mean rewriting upstream's module file. The rule refused the product
+        for carrying vendored code faithfully.
+        """
+        for body, ok, why in [
+                ('module x\n\n// pins: not-ours -- vendored upstream, pinned by PIN.json\ngo 1.20\n',
+                 True, 'a reasoned exemption'),
+                ('module x\n\n// pins: not-ours\ngo 1.20\n',
+                 False, 'no reason given'),
+                ('module x\n\n// pins: not-ours -- old\ngo 1.20\n',
+                 False, 'a reason too short to review'),
+                ('module x\n\ngo 1.20\n',
+                 False, 'no exemption at all'),
+        ]:
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_product(root, steps=[CHECKOUT], applications=())
+                (root/'vendored').mkdir()
+                (root/'vendored/go.mod').write_text(body)
+                stage(root)
+                result = run_pins(root)
+                if ok:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, why)
+
+    def test_an_exemption_does_not_excuse_the_products_own_modules(self):
+        # The escape hatch must not become the way every go.mod opts out of
+        # the check. One file exempting itself says nothing about the next.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=())
+            (root/'vendored').mkdir()
+            (root/'vendored/go.mod').write_text(
+                'module x\n\n// pins: not-ours -- vendored upstream at a pinned revision\ngo 1.20\n')
+            (root/'api').mkdir()
+            (root/'api/go.mod').write_text('module ours\n\ngo 1.20\n')
+            stage(root)
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('api/go.mod', result.stdout + result.stderr)
+
+    def test_a_module_that_is_not_ours_is_not_dependabots_either(self):
+        # Asking dependabot to watch vendored upstream source would open PRs
+        # proposing to edit somebody else's pinned revision. The coverage
+        # check must read the same exemption, and the fixture below declares
+        # no gomod entry for the vendored directory.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=())
+            (root/'vendored').mkdir()
+            (root/'vendored/go.mod').write_text(
+                'module github.com/someone/else\n\n'
+                '// pins: not-ours -- vendored upstream, pinned by PIN.json\ngo 1.20\n')
+            stage(root)
+            self.assertEqual(run_pins(root).returncode, 0)
+
     def test_missing_lockfile_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

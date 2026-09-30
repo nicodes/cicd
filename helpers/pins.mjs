@@ -192,15 +192,42 @@ for (const file of tracked.filter(file => /(^|[/.])Dockerfile$/.test(file))) {
     if (go) assert.equal(go, config.tools.go, `${file}: Go builder differs from mise`);
   }
 }
+const foreignGoMods = new Set();
 for (const file of tracked.filter(file => /(^|\/)go\.mod$/.test(file))) {
   if (!fs.existsSync(file)) continue;
   const module = fs.readFileSync(file, 'utf8');
+  // A repository can hold a go.mod that is not its own to change: vendored
+  // upstream source kept at a pinned revision, or a fixture whose whole
+  // purpose is to declare an old language version. Holding those to this
+  // product's toolchain means editing somebody else's module file, and
+  // fieldsofrevik vendors github.com/tianon/gosu at go 1.20 for exactly that
+  // reason -- the rule refused the product for carrying upstream code
+  // faithfully.
+  //
+  // The exemption lives IN the file it exempts, with its reason, the way a
+  // `# shellcheck disable=` does. A list kept somewhere else drifts away
+  // from the thing it describes, and the next person reading this go.mod
+  // would have no idea an exemption existed.
+  //
+  //   // pins: not-ours -- vendored upstream, pinned by PIN.json
+  const foreign = /^\/\/\s*pins:\s*not-ours\b[ \t-]*(.*)$/m.exec(module);
+  if (foreign) {
+    assert.ok(foreign[1].trim().length >= 12,
+      `${file}: say why this module is not ours to change, after "// pins: not-ours --"`);
+    foreignGoMods.add(file);
+    continue;
+  }
   assert.equal(/^go ([\d.]+)$/m.exec(module)?.[1], config.tools.go, `${file}: Go version differs from mise`);
   const toolchain = /^toolchain go([\d.]+)$/m.exec(module)?.[1];
   if (toolchain) assert.equal(toolchain, config.tools.go, `${file}: hidden toolchain drift`);
 }
 console.log(`Exact tool, lockfile, Go, image, and action pins verified in ${root}`);
 
+// A module that is not ours is not ours for dependabot either: asking it to
+// watch vendored upstream source would open PRs proposing to edit somebody
+// else's pinned revision. The exemption is read once, above, and applied
+// here too, so there is one place that decides.
 verifyDependencyCoverage(Bun.YAML.parse(fs.readFileSync('.github/dependabot.yml', 'utf8')),
-  execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean),
+  execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0')
+    .filter(Boolean).filter(file => !foreignGoMods.has(file)),
   Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8')));
