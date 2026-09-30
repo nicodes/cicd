@@ -16,9 +16,24 @@ for (const [relative, expected] of Object.entries(snapshot.files)) {
   assert.equal(createHash('sha256').update(bytes).digest('hex'), expected, `shared helper differs from the reviewed snapshot: ${relative}`);
 }
 const config = Bun.TOML.parse(fs.readFileSync('.mise.toml', 'utf8'));
-for (const [name, version] of Object.entries(config.tools)) {
-  assert.equal(typeof version, 'string', `${name}: use one exact tool version`);
-  assert.match(version, /^\d+\.\d+\.\d+$/, `${name}: ${version} is not an exact version`);
+for (const [name, entry] of Object.entries(config.tools)) {
+  // A tool is either "1.2.3" or a table carrying that plus mise options --
+  // asset_pattern, exe, postinstall. The Godot products pin every engine and
+  // CLI that way and cannot express them any other way, so reading only the
+  // string form refused three products outright for using a supported mise
+  // feature.
+  const version = typeof entry === 'string' ? entry : entry?.version;
+  assert.equal(typeof version, 'string',
+    `${name}: use one exact tool version (a table must carry an exact "version")`);
+  // What this is for is EXACTNESS, not a shape. "4.7.2-stable", "v0.0.8" and
+  // "cli-v0.0.5" are all exactly one build; a semver-triple-only pattern
+  // called them malformed while having nothing to say about "latest".
+  assert.doesNotMatch(version, /^(latest|lts|stable|system|ref:.*)$/i,
+    `${name}: ${version} is not a version, it is whatever that resolves to today`);
+  assert.doesNotMatch(version, /[\^~*>< ]|\bx\b/,
+    `${name}: ${version} is a range; pin the one version you tested`);
+  assert.match(version, /\d+\.\d+\.\d+/,
+    `${name}: ${version} is not an exact version`);
 }
 const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const applications = tracked.filter(file => /^[^/]+\/package\.json$/.test(file)).map(file => path.dirname(file));
