@@ -45,3 +45,52 @@ verifyDependencyCoverage(data.config, data.files, data.bun);
             self.assertNotEqual(check([], bun=excessive).returncode, 0)
         workflow['jobs']['update']['environment'] = 'production'
         self.assertNotEqual(check([]).returncode, 0)
+
+
+class ProductsWithNoBunApplication(unittest.TestCase):
+    """castledrop and prizm are Godot clients with a Go gate and no
+    package.json anywhere. Requiring a bun-updates workflow of them asks for
+    a scheduled job that would run `bun update` over nothing -- and the read
+    of that file was unconditional, so pins.mjs died on ENOENT before it
+    could even say what it wanted.
+    """
+
+    def coverage(self, files, bun_workflow):
+        program = (
+            "const m = await import(%s);"
+            "const [files, bun] = JSON.parse(process.argv[1]);"
+            "try { m.verifyDependencyCoverage(JSON.parse(process.argv[2]), files, bun);"
+            "      console.log('OK'); }"
+            "catch (e) { console.log('REFUSED: ' + e.message); }"
+        ) % json.dumps(str(Path(__file__).parents[1]/'helpers/dependency-coverage.mjs'))
+        config = {'version': 2, 'updates': [
+            {'package-ecosystem': 'github-actions', 'directories': ['/'],
+             'schedule': {'interval': 'weekly'}},
+            {'package-ecosystem': 'docker', 'directories': ['/deploy/images'],
+             'schedule': {'interval': 'weekly'}},
+        ]}
+        result = subprocess.run(
+            ['bun', '--eval', program, json.dumps([files, bun_workflow]), json.dumps(config)],
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_no_bun_application_means_no_bun_workflow_is_required(self):
+        self.assertEqual(self.coverage(['godot_client/project.godot'], None), 'OK')
+
+    def test_a_workflow_that_is_there_is_still_checked(self):
+        # Only the REQUIREMENT is lifted, not the checking. A first draft of
+        # this also FORBADE the workflow to such a product, which is an
+        # opinion this file has no business holding: these products do run
+        # bun -- pins.mjs is bun -- and whether the updater is useful to them
+        # is their decision.
+        said = self.coverage(['godot_client/project.godot'],
+                             {'on': {'schedule': [{'cron': '0 0 * * 1'}]}})
+        self.assertIn('REFUSED', said)
+
+    def test_a_product_WITH_a_bun_application_still_needs_it(self):
+        # The case worth catching: an app exists and somebody deleted the
+        # workflow. Keying on the application rather than on the workflow's
+        # own presence is what keeps this failing.
+        said = self.coverage(['app/package.json'], None)
+        self.assertIn('Bun native update schedule is required', said)

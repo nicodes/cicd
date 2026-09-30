@@ -12,6 +12,23 @@ export function verifyDependencyCoverage(config, files, bunWorkflow) {
     ['gomod', new Set(files.filter(file => /(^|\/)go\.mod$/.test(file))
       .map(file => path.posix.dirname(file) === '.' ? '/' : '/' + path.posix.dirname(file)))],
   ]);
+  // A product with no Bun application has nothing for the Bun updater to
+  // update, and castledrop and prizm are exactly that: Godot clients with a
+  // Go gate and no package.json anywhere. Requiring the workflow of them
+  // asks for a scheduled job that would run `bun update` over nothing.
+  //
+  // Only the REQUIREMENT is lifted, not the checking: a workflow that is
+  // there is still held to every rule below. And a product that HAS a Bun
+  // application is still required to carry one, so deleting the workflow to
+  // escape the checks fails -- that is the case worth catching.
+  //
+  // Nothing here forbids the workflow to a product without an application.
+  // These products do run bun (pins.mjs is bun), and whether the updater is
+  // useful to them is their decision, not this file's.
+  const hasBunApplication = files.some(file => /^[^/]+\/package\.json$/.test(file));
+  if (!hasBunApplication && !bunWorkflow) {
+    return checkEcosystems(config, required);
+  }
   assert.ok(bunWorkflow?.on?.schedule?.length, 'Bun native update schedule is required');
   assert.ok(bunWorkflow.on.schedule.every(item => /^\S+(?: \S+){4}$/.test(item.cron)), 'Bun schedule must be explicit');
   const job = bunWorkflow.jobs?.update;
@@ -20,6 +37,10 @@ export function verifyDependencyCoverage(config, files, bunWorkflow) {
   assert.deepEqual(job?.permissions, { contents: 'read', issues: 'write' }, 'Bun issue reporting must not grant code, PR or workflow writes');
   assert.ok(job?.steps?.some(step => step.run === 'python3 scripts/engineering/helpers/update-bun.py'), 'Pinned Bun updater must actually run');
   assert.ok(job?.steps?.some(step => step.uses?.startsWith('jdx/mise-action@')), 'Bun updater must install repository pins');
+  return checkEcosystems(config, required);
+}
+
+function checkEcosystems(config, required) {
   for (const [ecosystem, directories] of required) {
     for (const directory of directories) {
       assert.ok(config.updates.some(update => update['package-ecosystem'] === ecosystem
@@ -33,7 +54,9 @@ export function verifyDependencyCoverage(config, files, bunWorkflow) {
 if (import.meta.main) {
   const config = Bun.YAML.parse(fs.readFileSync('.github/dependabot.yml', 'utf8'));
   const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
-  const bunWorkflow = Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8'));
+  const bunWorkflow = fs.existsSync('.github/workflows/bun-updates.yml')
+    ? Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8'))
+    : null;
   verifyDependencyCoverage(config, files, bunWorkflow);
   console.log('Dependency update coverage includes the app, actions, images and every tracked Go module');
 }
