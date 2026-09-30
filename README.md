@@ -843,28 +843,59 @@ September 2026 an audit of the nine products found:
 No product was at fault and every one of them was green. That is what a
 per-repository check cannot see.
 
+### The check runs in the product, not here
+
+The obvious shape — a job here that reads all nine products — needs a
+credential. This repository is public, every product is private, they sit in
+three organisations, and a workflow's `GITHUB_TOKEN` reaches only its own
+repository. It also inverts the relationship: this is a library products
+call, not a service that reaches into them.
+
+So each product checks **itself** against a baseline this repository
+publishes:
+
 ```sh
-python3 helpers/fleet-audit.py              # reads each product's default branch
-python3 helpers/fleet-audit.py --facts f.json   # re-judge a saved read, offline
+bun scripts/engineering/helpers/fleet-baseline.mjs
 ```
 
-`FLEET.json` lists the products and gives each a profile. It asserts
-**agreement, not a constant**: there is no table saying which caddy digest is
-correct, because the rule is that everyone using caddy uses the same one — so
-dependabot bumping the first product turns the audit red, and the answer is to
-bump the rest. A table of expected values would need editing on every bump and
-would be wrong in between.
+**Agreement with one baseline is agreement with each other.** No product ever
+reads another, nothing needs a secret, and it runs on every pull request
+instead of once a week. The read is an unauthenticated HTTPS GET of a public
+file — `pins.mjs` stays offline and deterministic; this is the online one,
+like `action-pins.mjs`.
 
-The exceptions are the few absolute rules — a product using komizo-actions
-must carry the record where `pins.mjs` looks and must actually invoke it —
-because a fleet unanimously failing to check something is still not checking
-it.
+`FLEET.json` holds both halves: which products exist, with a profile each,
+and the `baseline` they share. Profiles keep legitimate difference quiet — a
+Godot client runs its own node version, and reporting that every run is how a
+check gets ignored.
 
-Profiles keep legitimate difference quiet. A Godot client runs its own node
-version, and reporting that as drift every week is how a check gets ignored;
-`profile_tools` are compared within a profile, `shared_tools` across all of
-them.
+A product missing from `FLEET.json` **fails** rather than passes. "No
+baseline applies" must not read as "compliant"; a product nothing declares is
+a product nothing audits, which is how five revisions came to be running at
+once.
 
-It runs weekly rather than on push: drift does not arrive when this
-repository changes, it appears on a day when one product moves and the others
-do not.
+### What the baseline deliberately leaves out
+
+Base image digests. Dependabot bumps those constantly and opens the same bump
+in every product at once, so a table here would be wrong between the bump
+landing in one product and somebody editing this repository. The September
+drift came from *merging* those PRs at different times, not from any product
+being skipped.
+
+That question is answered by an operator instead:
+
+```sh
+make fleet-audit          # reads every product's default branch with your own gh auth
+```
+
+It is not in `make check` and not scheduled, because it is the half that
+needs to read private repositories. It asserts **agreement, not a constant**:
+there is no table saying which caddy digest is right, only that everyone
+using caddy uses the same one.
+
+### The gap that remains
+
+A product that simply stops invoking `fleet-baseline.mjs` goes quiet, and
+nothing here notices — the same way one product's vendored `pins.mjs` was
+never called by anything and nobody knew for months. `make fleet-audit` is
+what catches that, and it is why the operator half still exists.
