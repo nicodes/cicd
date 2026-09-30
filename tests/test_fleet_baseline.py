@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from vendored import VENDORED
+
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'helpers/fleet-baseline.mjs'
 
@@ -142,6 +144,11 @@ class ProductIdentity(unittest.TestCase):
         self.assertIsNone(self.name({}, ''))
 
 
+# cicd-only: FLEET.json is this repository's, and a product vendors
+# helpers/ and tests/ without it. The rest of this module tests the
+# vendored helper itself and is worth running inside a product, so the
+# skip is on this class rather than the whole file.
+@unittest.skipIf(VENDORED, "cicd-only: asserts things about cicd's own FLEET.json")
 class TheRealBaseline(unittest.TestCase):
     def test_every_profile_in_products_has_baseline_tools(self):
         fleet = json.loads((ROOT / 'FLEET.json').read_text())
