@@ -192,3 +192,40 @@ class TheRealFleetFile(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ImageVariantTests(unittest.TestCase):
+    """A base image is identified by its tag as well as its name."""
+
+    def read(self, files):
+        def gh_tree(repo, ref='HEAD'):
+            return sorted(files)
+
+        def gh_file(repo, path, ref='HEAD'):
+            return files.get(path)
+
+        original = fleet_audit.gh_tree, fleet_audit.gh_file
+        fleet_audit.gh_tree, fleet_audit.gh_file = gh_tree, gh_file
+        try:
+            return fleet_audit.read_product('org/x')
+        finally:
+            fleet_audit.gh_tree, fleet_audit.gh_file = original
+
+    def test_two_variants_of_one_image_are_separate_facts(self):
+        """astry builds on golang:1.27.1-bookworm for cgo; everyone else on
+        -alpine. Keyed on the name alone those digests could never match, and
+        the audit reported a permanent disagreement about a deliberate
+        difference."""
+        facts = self.read({
+            'deploy/images/api.Dockerfile':
+                'FROM golang:1.27.1-bookworm@sha256:' + 'a' * 64 + ' AS builder\n',
+            'deploy/images/gate.Dockerfile':
+                'FROM golang:1.27.1-alpine@sha256:' + 'b' * 64 + ' AS builder\n',
+        })
+        self.assertEqual(sorted(facts['images']),
+                         ['golang:1.27.1-alpine', 'golang:1.27.1-bookworm'])
+
+    def test_the_same_variant_still_carries_one_digest_to_compare(self):
+        facts = self.read({'deploy/images/api.Dockerfile':
+                           'FROM alpine:3@sha256:' + 'c' * 64 + '\n'})
+        self.assertEqual(facts['images'], {'alpine:3': ('sha256:' + 'c' * 64)[:19]})

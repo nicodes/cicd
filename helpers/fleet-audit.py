@@ -148,7 +148,13 @@ def audit(facts, fleet):
                 findings.append(found)
 
     # --- base images ------------------------------------------------------
-    # Keyed on the image NAME, so caddy is compared with caddy. A product that
+    # Keyed on the image name AND tag, so caddy:2-alpine is compared with
+    # caddy:2-alpine. The name alone was wrong: astry builds its Go API on
+    # golang:1.27.1-bookworm because it needs a C toolchain for cgo and the
+    # Swiss Ephemeris, and everyone else builds on golang:1.27.1-alpine. Those
+    # digests can never match, so the name-keyed check reported a permanent
+    # disagreement about a deliberate, documented difference -- the kind of
+    # finding that teaches people to stop reading the report. A product that
     # does not use an image is not asked about it.
     for image in sorted({i for p in products for i in facts[p]['images']}):
         found = disagreement('images', image,
@@ -224,15 +230,15 @@ def read_product(repo):
         body = gh_file(repo, path) or ''
         if 'komizo-actions/' in body:
             facts['uses_komizo_actions'] = True
-        for name, digest in re.findall(r'^FROM\s+([a-z0-9./-]+):[\w.-]+@(sha256:[a-f0-9]{64})',
-                                       body, re.M):
-            facts['images'][name] = digest[:19]
+        for name, tag, digest in re.findall(r'^FROM\s+([a-z0-9./-]+):([\w.-]+)@(sha256:[a-f0-9]{64})',
+                                            body, re.M):
+            facts['images'][f'{name}:{tag}'] = digest[:19]
 
     for path in tree:
         if path.endswith(('Dockerfile',)) or '.Dockerfile' in path or path.endswith('Dockerfile.dev'):
-            for name, digest in re.findall(r'^FROM\s+([a-z0-9./-]+):[\w.-]+@(sha256:[a-f0-9]{64})',
-                                           gh_file(repo, path) or '', re.M):
-                facts['images'][name] = digest[:19]
+            for name, tag, digest in re.findall(r'^FROM\s+([a-z0-9./-]+):([\w.-]+)@(sha256:[a-f0-9]{64})',
+                                                gh_file(repo, path) or '', re.M):
+                facts['images'][f'{name}:{tag}'] = digest[:19]
 
     # Invoked, not merely present. A gate nothing calls is not a gate.
     for path in tree:
