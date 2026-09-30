@@ -50,3 +50,54 @@ class VerifiedRepairs(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AcceptedFindings(unittest.TestCase):
+    """An advisory a product has examined and decided does not apply.
+
+    bun audit knows a version is in the tree and nothing else -- no
+    reachability, unlike govulncheck on the Go side. For these products the
+    answer is usually that it cannot reach production at all: every deployed
+    container is Go, Caddy, Postgres or Redis, and the JavaScript is a static
+    bundle served to browsers. A build-time dependency of eslint has no
+    process to be attacked in.
+
+    Treating every finding as fatal stopped nine products deploying over a
+    recursion DoS in a linter's glob matcher.
+    """
+
+    def accepted(self, **over):
+        base = {'kind': 'accepted', 'owner': 'nicodes', 'package': 'brace-expansion',
+                'advisories': ['GHSA-qhr7-859c-m2p7'],
+                'rationale': 'build-time only: reached through eslint and expo config '
+                             'plugins, and nothing in production runs JavaScript.',
+                'review_date': str(datetime.date.today() + datetime.timedelta(days=30))}
+        base.update(over)
+        return base
+
+    def test_an_examined_finding_is_accepted(self):
+        module.verify_accepted(self.accepted())
+
+    def test_an_overdue_acceptance_fails_the_build(self):
+        # The whole point. An acceptance with no end is a permanent hole
+        # nobody revisits, which is worse than the strictness it replaces.
+        with self.assertRaises(RuntimeError) as caught:
+            module.verify_accepted(self.accepted(
+                review_date=str(datetime.date.today() - datetime.timedelta(days=1))))
+        self.assertIn('overdue', str(caught.exception))
+
+    def test_every_acceptance_is_owned_and_dated(self):
+        for missing in ('owner', 'rationale', 'package', 'advisories', 'review_date'):
+            with self.subTest(missing=missing):
+                entry = self.accepted()
+                del entry[missing]
+                with self.assertRaises(RuntimeError):
+                    module.verify_accepted(entry)
+
+    def test_a_rationale_has_to_say_something(self):
+        # "wontfix" is not a review. The reader of this file months from now
+        # needs to be able to check the reasoning, not just that a box was
+        # ticked.
+        with self.assertRaises(RuntimeError) as caught:
+            module.verify_accepted(self.accepted(rationale='not exploitable'))
+        self.assertIn('rationale somebody can review', str(caught.exception))

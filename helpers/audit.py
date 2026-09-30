@@ -34,6 +34,36 @@ def verify_repair(app, repair):
                 raise RuntimeError('a nested image-size copy lacks the verified repair')
 
 
+def verify_accepted(accepted):
+    """An advisory a product has looked at and decided does not apply to it.
+
+    The gap this fills: bun audit knows a version is in the tree and nothing
+    else. It cannot say whether the code is reachable, and for these products
+    the answer is usually no -- NOTHING in production runs JavaScript. Every
+    deployed container is Go, Caddy, Postgres or Redis; the JS is a static
+    bundle served to browsers, and a build-time dependency of eslint or a
+    config plugin has no process to be attacked in.
+
+    Treating every finding as fatal therefore stopped nine products from
+    deploying over a recursion DoS in a linter's glob matcher, with no way to
+    say so except editing this file.
+
+    THE EXPIRY IS THE WHOLE POINT. An acceptance with no end date is a
+    permanent hole nobody revisits, which is worse than the strictness it
+    replaces. review_date is already how a repair is kept honest; the same
+    rule applies here, and an overdue entry fails the build.
+    """
+    for field in ('owner', 'rationale', 'package', 'advisories', 'review_date'):
+        if not accepted.get(field):
+            raise RuntimeError(f'an accepted finding needs {field}')
+    if len(accepted['rationale']) < 40:
+        raise RuntimeError('an accepted finding needs a rationale somebody can review, '
+                           'not a word -- say why it cannot reach production')
+    if datetime.date.fromisoformat(accepted['review_date']) < datetime.date.today():
+        raise RuntimeError(f"accepted finding for {accepted['package']} is overdue for review "
+                           f"({accepted['review_date']}); re-examine it or fix the dependency")
+
+
 def main():
     app = Path(sys.argv[1] if len(sys.argv)>1 else 'app').resolve()
     result = subprocess.run(['bun', 'audit', '--json'], cwd=app,
@@ -49,13 +79,24 @@ def main():
     repairs = json.loads(repairs_file.read_text()) if repairs_file.exists() else []
     repaired = {}
     for repair in repairs:
-        if repair['package'] != 'image-size' or repair['version'] != '1.2.1':
-            raise RuntimeError('unknown repair; add an independently reviewed verification first')
-        if set(repair['advisories']) != {'GHSA-w3rx-r6r6-pgpr', 'GHSA-5p2g-fcmc-qvqq'}:
-            raise RuntimeError('the image parser repair does not cover these advisories')
-        verify_repair(app, repair)
-        subprocess.run(['node', str(Path(__file__).with_name('image-parser-test.cjs')), str(app)], check=True, timeout=30)
-        repaired[repair['package']] = set(repair['advisories'])
+        kind = repair.get('kind', 'repaired')
+        if kind == 'repaired':
+            # We changed the dependency ourselves, so prove the change is
+            # still installed and still does what it claimed.
+            verify_repair(app, repair)
+            if repair['package'] == 'image-size':
+                # The one repair with a behavioural test of its own. It used
+                # to be the ONLY repair this file would accept at all --
+                # `if repair['package'] != 'image-size': raise` -- which put
+                # one product's package name in the shared library and meant
+                # no other product could ever declare anything.
+                subprocess.run(['node', str(Path(__file__).with_name('image-parser-test.cjs')), str(app)],
+                               check=True, timeout=30)
+        elif kind == 'accepted':
+            verify_accepted(repair)
+        else:
+            raise RuntimeError(f'unknown remediation kind: {kind!r}')
+        repaired.setdefault(repair['package'], set()).update(repair['advisories'])
     remaining = []
     for package, findings in report.items():
         for finding in findings:
