@@ -77,7 +77,8 @@ def main():
         raise RuntimeError('audit failed without findings; refusing a false pass')
     repairs_file = app/'security-remediations.json'
     repairs = json.loads(repairs_file.read_text()) if repairs_file.exists() else []
-    repaired = {}
+    resolved = {}
+    expiry = {}
     for repair in repairs:
         kind = repair.get('kind', 'repaired')
         if kind == 'repaired':
@@ -94,17 +95,26 @@ def main():
                                check=True, timeout=30)
         elif kind == 'accepted':
             verify_accepted(repair)
+            expiry[repair['package']] = repair['review_date']
         else:
             raise RuntimeError(f'unknown remediation kind: {kind!r}')
-        repaired.setdefault(repair['package'], set()).update(repair['advisories'])
+        for advisory in repair['advisories']:
+            resolved[(repair['package'], advisory)] = kind
     remaining = []
     for package, findings in report.items():
         for finding in findings:
             advisory = finding['url'].rsplit('/', 1)[-1]
-            if advisory not in repaired.get(package, set()):
+            kind = resolved.get((package, advisory))
+            if kind is None:
                 remaining.append(f'{package}: {finding["severity"]}: {finding["url"]}')
-            else:
+            elif kind == 'repaired':
                 print(f'Locally repaired and verified: {package}: {advisory}')
+            else:
+                # Say which it was. An accepted finding is still present and
+                # still unpatched, and reporting it as "repaired and
+                # verified" tells the reader of a build log the opposite of
+                # what happened.
+                print(f'Accepted as unreachable, expires {expiry[package]}: {package}: {advisory}')
     if remaining:
         raise RuntimeError('unresolved dependency findings:\n'+'\n'.join(remaining))
     print('Online audit passed with all reported findings resolved or verified as locally repaired.')
