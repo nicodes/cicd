@@ -368,6 +368,47 @@ class ApplicationManifestScan(unittest.TestCase):
             stage(root)
             self.assertEqual(run_pins(root).returncode, 0)
 
+    def test_a_fixture_dockerfile_can_say_its_base_is_a_parameter(self):
+        """castledrop and prizm keep a Dockerfile whose whole purpose is to
+        take the image under test as ARG BASE_IMAGE: a test builds it,
+        asserts something, throws it away. Demanding a digest there asks for
+        the one thing the fixture exists to vary."""
+        for body, ok, why in [
+                ('# pins: unpinned-base -- fixture; the caller supplies BASE_IMAGE\n'
+                 'ARG BASE_IMAGE=scratch\nFROM ${BASE_IMAGE}\n', True, 'a reasoned exemption'),
+                ('# pins: unpinned-base\nARG BASE_IMAGE=scratch\nFROM ${BASE_IMAGE}\n',
+                 False, 'no reason given'),
+                ('ARG BASE_IMAGE=scratch\nFROM ${BASE_IMAGE}\n', False, 'no exemption'),
+        ]:
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_product(root, steps=[CHECKOUT], applications=())
+                (root/'tools').mkdir()
+                (root/'tools/fixture.Dockerfile').write_text(body)
+                stage(root)
+                result = run_pins(root)
+                if ok:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, why)
+
+    def test_the_fixture_marker_does_not_excuse_a_shipped_image(self):
+        # One Dockerfile exempting itself says nothing about the next. A
+        # shipped image with an unpinned base is the thing this rule is for.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[CHECKOUT], applications=())
+            (root/'tools').mkdir()
+            (root/'tools/fixture.Dockerfile').write_text(
+                '# pins: unpinned-base -- fixture; the caller supplies BASE_IMAGE\n'
+                'ARG BASE_IMAGE=scratch\nFROM ${BASE_IMAGE}\n')
+            (root/'deploy').mkdir()
+            (root/'deploy/gate.Dockerfile').write_text('FROM caddy:2-alpine\n')
+            stage(root)
+            result = run_pins(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('deploy/gate.Dockerfile', result.stdout + result.stderr)
+
     def test_missing_lockfile_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

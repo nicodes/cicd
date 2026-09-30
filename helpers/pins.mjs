@@ -183,8 +183,29 @@ if (komizoUses.length > 0) {
     assert.equal(sha, pin.sha, `${file}: ${komizoActions}/${action} is pinned at ${sha} but the fleet record pins ${pin.tag} (${pin.sha}); align the workflow with ${pinRecord} across all products`);
   }
 }
+const fixtureDockerfiles = new Set();
 for (const file of tracked.filter(file => /(^|[/.])Dockerfile$/.test(file))) {
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+  const dockerfile = fs.readFileSync(file, 'utf8');
+  // A Dockerfile whose base is a build argument cannot name a digest, and
+  // not every Dockerfile in a repository is shipped. castledrop and prizm
+  // keep one whose entire purpose is to take the image under test as
+  // ARG BASE_IMAGE: a test builds it, asserts something about the result,
+  // and throws it away. Demanding a digest there asks for the one thing the
+  // fixture exists to vary.
+  //
+  // Marked in the file, with its reason, like the not-ours marker on a
+  // go.mod -- and it must say it is not deployed, because that is the claim
+  // that makes it safe rather than the syntax being awkward.
+  //
+  //   # pins: unpinned-base -- fixture; the caller supplies BASE_IMAGE
+  const fixture = /^#\s*pins:\s*unpinned-base\b[ \t-]*(.*)$/m.exec(dockerfile);
+  if (fixture) {
+    assert.ok(fixture[1].trim().length >= 12,
+      `${file}: say why this image needs no digest, after "# pins: unpinned-base --"`);
+    fixtureDockerfiles.add(file);
+    continue;
+  }
+  for (const line of dockerfile.split('\n')) {
     const from = /^FROM\s+(\S+)/i.exec(line)?.[1];
     if (!from || from === 'scratch') continue;
     assert.match(from, /@sha256:[a-f0-9]{64}$/, `${file}: pin the base image digest: ${from}`);
@@ -229,5 +250,8 @@ console.log(`Exact tool, lockfile, Go, image, and action pins verified in ${root
 // here too, so there is one place that decides.
 verifyDependencyCoverage(Bun.YAML.parse(fs.readFileSync('.github/dependabot.yml', 'utf8')),
   execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0')
-    .filter(Boolean).filter(file => !foreignGoMods.has(file)),
+    // Same reasoning for both exemptions: dependabot cannot bump a module
+    // that is not ours, and cannot bump a base image the caller supplies.
+    // Read once, above, so one place decides.
+    .filter(Boolean).filter(file => !foreignGoMods.has(file) && !fixtureDockerfiles.has(file)),
   Bun.YAML.parse(fs.readFileSync('.github/workflows/bun-updates.yml', 'utf8')));
