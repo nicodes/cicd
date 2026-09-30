@@ -824,3 +824,78 @@ jobs:
   an under-grant surfaces as a startup_failure with zero jobs, not a failing
   step.
 <!-- ws13/deployed-reusable: end -->
+
+## Do the products agree with each other?
+
+`pins.mjs` makes **one** product internally consistent: its lockfiles, Go
+version, image digests and komizo-action pins all have to agree with each
+other. Nothing checked that products agree with **each other**, and in
+September 2026 an audit of the nine products found:
+
+- **five** different vendored snapshot revisions live at once
+- the vendored tree present in **five different sizes** — not drift from one
+  snapshot, five different subsets of it
+- the komizo-action pin gate in **four** incompatible states, including one
+  product carrying a second pin record, in its own schema, at its own path,
+  that nothing read
+- `caddy`, `alpine` and `golang` each pinned to two or three different digests
+
+No product was at fault and every one of them was green. That is what a
+per-repository check cannot see.
+
+### The check runs in the product, not here
+
+The obvious shape — a job here that reads all nine products — needs a
+credential. This repository is public, every product is private, they sit in
+three organisations, and a workflow's `GITHUB_TOKEN` reaches only its own
+repository. It also inverts the relationship: this is a library products
+call, not a service that reaches into them.
+
+So each product checks **itself** against a baseline this repository
+publishes:
+
+```sh
+bun scripts/engineering/helpers/fleet-baseline.mjs
+```
+
+**Agreement with one baseline is agreement with each other.** No product ever
+reads another, nothing needs a secret, and it runs on every pull request
+instead of once a week. The read is an unauthenticated HTTPS GET of a public
+file — `pins.mjs` stays offline and deterministic; this is the online one,
+like `action-pins.mjs`.
+
+`FLEET.json` holds both halves: which products exist, with a profile each,
+and the `baseline` they share. Profiles keep legitimate difference quiet — a
+Godot client runs its own node version, and reporting that every run is how a
+check gets ignored.
+
+A product missing from `FLEET.json` **fails** rather than passes. "No
+baseline applies" must not read as "compliant"; a product nothing declares is
+a product nothing audits, which is how five revisions came to be running at
+once.
+
+### What the baseline deliberately leaves out
+
+Base image digests. Dependabot bumps those constantly and opens the same bump
+in every product at once, so a table here would be wrong between the bump
+landing in one product and somebody editing this repository. The September
+drift came from *merging* those PRs at different times, not from any product
+being skipped.
+
+That question is answered by an operator instead:
+
+```sh
+make fleet-audit          # reads every product's default branch with your own gh auth
+```
+
+It is not in `make check` and not scheduled, because it is the half that
+needs to read private repositories. It asserts **agreement, not a constant**:
+there is no table saying which caddy digest is right, only that everyone
+using caddy uses the same one.
+
+### The gap that remains
+
+A product that simply stops invoking `fleet-baseline.mjs` goes quiet, and
+nothing here notices — the same way one product's vendored `pins.mjs` was
+never called by anything and nobody knew for months. `make fleet-audit` is
+what catches that, and it is why the operator half still exists.
