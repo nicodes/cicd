@@ -1,0 +1,20 @@
+{
+  "note": "Every product that vendors this repository's engineering snapshot. helpers/fleet-audit.py reads each one's default branch and refuses when they disagree. A product missing from here is a product nothing checks, which is how five different snapshot revisions came to be running at once.",
+  "profiles": {
+    "service": "Go or web backend deployed by komizo. Lints shell and workflows, runs the pin gate from scripts/test.sh.",
+    "godot": "Godot game with a Go backend. Different client toolchain, so its node version and client-side tools are its own; everything shared with a service is still shared."
+  },
+  "products": {
+    "nicodes/cazper-be": {"profile": "service"},
+    "astrylogical/astry-be": {"profile": "service"},
+    "aviorstudio/gdam-be": {"profile": "service"},
+    "aviorstudio/termcade-be": {"profile": "service"},
+    "nicodes/ctcalc-be": {"profile": "service"},
+    "nicodes/tonesplit-be": {"profile": "service"},
+    "aviorstudio/fieldsofrevik": {"profile": "godot"},
+    "aviorstudio/castledrop": {"profile": "godot"},
+    "aviorstudio/prizm": {"profile": "godot"}
+  },
+  "shared_tools": ["python", "bun"],
+  "profile_tools": ["go", "node", "actionlint", "shellcheck"]
+}

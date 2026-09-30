@@ -824,3 +824,47 @@ jobs:
   an under-grant surfaces as a startup_failure with zero jobs, not a failing
   step.
 <!-- ws13/deployed-reusable: end -->
+
+## Do the products agree with each other?
+
+`pins.mjs` makes **one** product internally consistent: its lockfiles, Go
+version, image digests and komizo-action pins all have to agree with each
+other. Nothing checked that products agree with **each other**, and in
+September 2026 an audit of the nine products found:
+
+- **five** different vendored snapshot revisions live at once
+- the vendored tree present in **five different sizes** — not drift from one
+  snapshot, five different subsets of it
+- the komizo-action pin gate in **four** incompatible states, including one
+  product carrying a second pin record, in its own schema, at its own path,
+  that nothing read
+- `caddy`, `alpine` and `golang` each pinned to two or three different digests
+
+No product was at fault and every one of them was green. That is what a
+per-repository check cannot see.
+
+```sh
+python3 helpers/fleet-audit.py              # reads each product's default branch
+python3 helpers/fleet-audit.py --facts f.json   # re-judge a saved read, offline
+```
+
+`FLEET.json` lists the products and gives each a profile. It asserts
+**agreement, not a constant**: there is no table saying which caddy digest is
+correct, because the rule is that everyone using caddy uses the same one — so
+dependabot bumping the first product turns the audit red, and the answer is to
+bump the rest. A table of expected values would need editing on every bump and
+would be wrong in between.
+
+The exceptions are the few absolute rules — a product using komizo-actions
+must carry the record where `pins.mjs` looks and must actually invoke it —
+because a fleet unanimously failing to check something is still not checking
+it.
+
+Profiles keep legitimate difference quiet. A Godot client runs its own node
+version, and reporting that as drift every week is how a check gets ignored;
+`profile_tools` are compared within a profile, `shared_tools` across all of
+them.
+
+It runs weekly rather than on push: drift does not arrive when this
+repository changes, it appears on a day when one product moves and the others
+do not.
