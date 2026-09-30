@@ -101,3 +101,39 @@ class AcceptedFindings(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             module.verify_accepted(self.accepted(rationale='not exploitable'))
         self.assertIn('rationale somebody can review', str(caught.exception))
+
+
+class WhatTheBuildLogSays(unittest.TestCase):
+    """A build log is read months later by somebody deciding whether to trust
+    a release. "Locally repaired and verified" about a finding that was
+    merely accepted tells them the opposite of what happened: the dependency
+    is still present and still unpatched."""
+
+    def report(self, app, findings):
+        import subprocess
+        from unittest import mock
+        completed = subprocess.CompletedProcess([], 1, json.dumps(findings), '')
+        with mock.patch.object(module.subprocess, 'run', return_value=completed), \
+             mock.patch.object(module.sys, 'argv', ['audit.py', str(app)]):
+            from io import StringIO
+            import contextlib
+            out = StringIO()
+            with contextlib.redirect_stdout(out):
+                module.main()
+            return out.getvalue()
+
+    def test_an_accepted_finding_is_not_reported_as_repaired(self):
+        app = Path(self.temp.name) if hasattr(self, 'temp') else None
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        app = Path(temp.name)
+        (app/'security-remediations.json').write_text(json.dumps([{
+            'kind': 'accepted', 'package': 'brace-expansion', 'owner': 'nicodes',
+            'advisories': ['GHSA-qhr7-859c-m2p7'],
+            'rationale': 'build-time only; nothing in production runs JavaScript at all.',
+            'review_date': str(datetime.date.today() + datetime.timedelta(days=10))}]))
+        said = self.report(app, {'brace-expansion': [
+            {'severity': 'high', 'url': 'https://github.com/advisories/GHSA-qhr7-859c-m2p7'}]})
+        self.assertIn('Accepted as unreachable', said)
+        self.assertIn('expires', said)
+        self.assertNotIn('repaired and verified', said)
