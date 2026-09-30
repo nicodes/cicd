@@ -268,6 +268,45 @@ class ApplicationManifestScan(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('not an exact version', result.stdout + result.stderr)
 
+    def test_a_tool_table_is_read_for_its_version(self):
+        """mise lets a tool carry options beside its version, and the Godot
+        products pin every engine and CLI that way -- there is no other way to
+        express an asset_pattern or a postinstall. Reading only the string form
+        refused three products for using a supported feature."""
+        for entry, ok in [
+                ('"github:godotengine/godot" = { version = "4.7.2-stable", exe = "bin/godot" }', True),
+                ('"github:aviorstudio/gdam" = { version = "v0.0.8", bin = "gdam" }', True),
+                ('"github:x/y" = { version = "cli-v0.0.5" }', True),
+                # Exactness is the point, and a table must not smuggle past it.
+                ('"github:x/y" = { version = "latest" }', False),
+                ('"github:x/y" = { exe = "bin/y" }', False),
+                ('"github:x/y" = { version = "^1.2.3" }', False),
+                ('"github:x/y" = { version = "3" }', False),
+        ]:
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_product(root, steps=[CHECKOUT], applications=())
+                (root / '.mise.toml').write_text(f'[tools]\nbun = "1.4.1"\n{entry}\n')
+                stage(root)
+                result = run_pins(root)
+                if ok:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, entry)
+
+    def test_a_resolving_version_is_refused_however_it_is_spelled(self):
+        # "not an exact version" had nothing to say about these: the old
+        # pattern only knew the shape 1.2.3, so `latest` failed for looking
+        # wrong rather than for being a moving target, and `stable` passed
+        # nothing at all because no product had tried it.
+        for version in ('latest', 'lts', 'stable', 'system', '^1.2.3', '~1.2.3', '1.2.x'):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_product(root, steps=[CHECKOUT], applications=())
+                (root / '.mise.toml').write_text(f'[tools]\nbun = "{version}"\n')
+                stage(root)
+                self.assertNotEqual(run_pins(root).returncode, 0, version)
+
     def test_missing_lockfile_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
