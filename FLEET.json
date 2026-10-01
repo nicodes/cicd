@@ -6,31 +6,76 @@
   },
   "products": {
     "nicodes/cazper-be": {
-      "profile": "service"
+      "profile": "service",
+      "auth": {
+        "provider": "clerk",
+        "api": true,
+        "enforced": false
+      }
     },
     "astrylogical/astry-be": {
-      "profile": "service"
+      "profile": "service",
+      "auth": {
+        "provider": "clerk",
+        "api": true,
+        "enforced": false
+      }
     },
     "aviorstudio/gdam-be": {
-      "profile": "service"
+      "profile": "service",
+      "auth": {
+        "provider": "clerk",
+        "api": true,
+        "enforced": false
+      }
     },
     "aviorstudio/termcade-be": {
-      "profile": "service"
+      "profile": "service",
+      "auth": {
+        "provider": "clerk",
+        "api": true,
+        "enforced": false
+      }
     },
     "nicodes/ctcalc-be": {
-      "profile": "service"
+      "profile": "service",
+      "auth": {
+        "provider": "none",
+        "api": false,
+        "enforced": false
+      }
     },
     "nicodes/tonesplit-be": {
-      "profile": "service"
+      "profile": "service",
+      "auth": {
+        "provider": "clerk",
+        "api": false,
+        "enforced": false
+      }
     },
     "aviorstudio/fieldsofrevik": {
-      "profile": "godot"
+      "profile": "godot",
+      "auth": {
+        "provider": "clerk",
+        "api": true,
+        "enforced": false
+      }
     },
     "aviorstudio/castledrop": {
-      "profile": "godot"
+      "profile": "godot",
+      "auth": {
+        "provider": "none",
+        "api": false,
+        "enforced": false
+      }
     },
     "aviorstudio/prizm": {
-      "profile": "godot"
+      "profile": "godot",
+      "auth": {
+        "provider": "none",
+        "api": false,
+        "enforced": false
+      }
     }
   },
   "shared_tools": [
@@ -61,6 +106,25 @@
       "godot": {
         "go": "1.27.1",
         "node": "26.7.0"
+      }
+    }
+  },
+  "auth_contract": {
+    "note": "Three environments, three identity sources. local: a fixed development user and no Clerk tenant at all. preview: the Clerk DEVELOPMENT instance, with the per-PR origin as its authorized party. production: the Clerk PRODUCTION instance. helpers/auth-boundary.mjs checks a product against this. provider \"none\" means the product must reference Clerk nowhere -- declared so that adopting it anywhere is a change to this file and therefore reviewed. \"api\" is whether the product runs a server that verifies a token; a product without one has no secret key to route and no bypass to compile out. \"enforced\" is how the fleet adopts this one product at a time: the gate reports on a product that is not enforced yet and fails one that is. Turning it on is the last step of bringing a product into line, not the first.",
+    "environments": {
+      "local": {
+        "identity": "fixed development user",
+        "clerk": "none"
+      },
+      "preview": {
+        "identity": "clerk",
+        "instance": "development",
+        "secret": "CLERK_SECRET_KEY_DEV"
+      },
+      "production": {
+        "identity": "clerk",
+        "instance": "production",
+        "secret": "CLERK_SECRET_KEY_PROD"
       }
     }
   }
