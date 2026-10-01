@@ -86,14 +86,35 @@ class AbsoluteRules(unittest.TestCase):
     to check something is still not checking it."""
 
     def test_a_pin_record_somewhere_else_is_a_record_nothing_reads(self):
-        # fieldsofrevik carried one at the repository root, in its own schema,
-        # covering every action rather than komizo's. pins.mjs looks at
-        # scripts/engineering/ACTION-PINS.json and found nothing.
+        # fieldsofrevik carried one in its own schema, covering every action
+        # rather than komizo's, where pins.mjs does not look.
         facts = {'org/a': product(), 'org/b': product(),
-                 'org/g': product(pin_record_path='ACTION-PINS.json')}
+                 'org/g': product(pin_record_path='deploy/ACTION-PINS.json')}
         findings = fleet_audit.audit(facts, FLEET)
         said = [str(f) for f in findings if f.kind == 'pins']
-        self.assertTrue(any('org/g' in s and 'pins.mjs cannot read it' in s for s in said), said)
+        self.assertTrue(any('org/g' in s and 'does not look' in s for s in said), said)
+
+    def test_both_supported_record_locations_are_accepted(self):
+        """The root is where it belongs; the snapshot directory is where the
+        products that have not migrated still keep it. Neither is a finding."""
+        facts = {'org/a': product(pin_record_path='ACTION-PINS.json'),
+                 'org/b': product(pin_record_path='scripts/engineering/ACTION-PINS.json')}
+        said = [str(f) for f in fleet_audit.audit(facts, FLEET) if f.kind == 'pins']
+        self.assertEqual([s for s in said if 'does not look' in s], [])
+
+    def test_an_installed_product_is_not_reported_for_having_no_copied_files(self):
+        """Comparing 0 files against 66 is a finding about the mechanism."""
+        facts = {'org/a': product(), 'org/b': product(),
+                 'org/g': product(snapshot_files=None)}
+        said = [str(f) for f in fleet_audit.audit(facts, FLEET) if f.kind == 'snapshot']
+        self.assertEqual([s for s in said if 'file set' in s], [], said)
+
+    def test_a_vendored_product_that_really_does_differ_is_still_reported(self):
+        facts = {'org/a': product(), 'org/b': product(),
+                 'org/g': product(snapshot_files=['scripts/engineering/SOURCE.json',
+                                                  'scripts/engineering/extra.py'])}
+        said = [str(f) for f in fleet_audit.audit(facts, FLEET) if f.kind == 'snapshot']
+        self.assertTrue(any('file set' in s and 'org/g' in s for s in said), said)
 
     def test_using_komizo_actions_with_no_record_at_all(self):
         facts = {'org/a': product(), 'org/b': product(),

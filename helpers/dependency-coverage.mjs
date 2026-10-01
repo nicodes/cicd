@@ -35,7 +35,11 @@ export function verifyDependencyCoverage(config, files, bunWorkflow) {
   assert.equal(job?.if, "github.ref == 'refs/heads/main'", 'Bun writes are restricted to main');
   assert.equal(job?.environment, undefined, 'Bun updater must not receive production secrets');
   assert.deepEqual(job?.permissions, { contents: 'read', issues: 'write' }, 'Bun issue reporting must not grant code, PR or workflow writes');
-  assert.ok(job?.steps?.some(step => step.run === 'python3 scripts/engineering/helpers/update-bun.py'), 'Pinned Bun updater must actually run');
+  // Matched by what it runs, not by where it lives. A product that installs
+  // the snapshot resolves the helper through $CICD_ENGINEERING, so an exact
+  // vendored path here failed a product that was doing the right thing.
+  assert.ok(job?.steps?.some(step => /\bupdate-bun\.py\b/.test(step.run ?? '')),
+    'Pinned Bun updater must actually run');
   assert.ok(job?.steps?.some(step => step.uses?.startsWith('jdx/mise-action@')), 'Bun updater must install repository pins');
   return checkEcosystems(config, required);
 }
