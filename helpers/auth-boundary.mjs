@@ -258,3 +258,30 @@ export function report(product, findings, enforced) {
     : `${product} does not hold the auth boundary contract yet (not enforced, so this is a report):`;
   return { text: `${head}\n${lines.join('\n')}`, failed: enforced };
 }
+
+if (import.meta.main) {
+  // The same unauthenticated fetch fleet-baseline.mjs uses: FLEET.json is
+  // public, every product is private, and a check that needed a token could
+  // not run on every pull request across three owners.
+  const { productName, fetchBaseline, BASELINE_URL } = await import('./fleet-baseline.mjs');
+  const { execFileSync } = await import('node:child_process');
+  let remote = '';
+  try {
+    remote = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim();
+  } catch { /* CI supplies the name */ }
+  const product = productName(process.env, remote);
+  if (!product) {
+    console.error('cannot tell which product this is: no GITHUB_REPOSITORY and no git remote');
+    process.exit(1);
+  }
+  const fleet = await fetchBaseline(BASELINE_URL);
+  const declared = fleet.products?.[product]?.auth;
+  const findings = checkAuthBoundary(process.cwd(), declared);
+  const { text, failed } = report(product, findings, declared?.enforced);
+  (failed ? console.error : console.log)(text);
+  if (failed) {
+    console.error('\nThe contract is in FLEET.json under auth_contract: local uses no Clerk ' +
+      'tenant, preview uses the development instance, production uses the production one.');
+  }
+  process.exit(failed ? 1 : 0);
+}
