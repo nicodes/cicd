@@ -24,9 +24,16 @@ LS_REMOTE = ''.join(f'{tag}\trefs/tags/{name}\n{commit}\trefs/tags/{name}^{{}}\n
                                               ('v0.0.10', V10_TAG, V10)])
 
 
-def write_product(root, steps=(), composite=None, record=None, applications=('app',)):
-    """Build the smallest product tree that passes every other pins.mjs check."""
-    engineering = root / 'scripts/engineering'
+def write_product(root, steps=(), composite=None, record=None, applications=('app',),
+                  installed=False):
+    """Build the smallest product tree that passes every other pins.mjs check.
+
+    `installed` builds the layout a product has after it stops vendoring: the
+    snapshot sits outside the repository where mise put it, and the product's
+    own pin record sits at the repository root, because there is no longer a
+    product-owned directory inside the snapshot to hold it.
+    """
+    engineering = (root.parent / 'installed-engineering') if installed else (root / 'scripts/engineering')
     (engineering / 'helpers').mkdir(parents=True)
     helper = engineering / 'helpers/pins.mjs'
     helper.write_text('// vendored helper fixture\n')
@@ -61,7 +68,8 @@ def write_product(root, steps=(), composite=None, record=None, applications=('ap
         action.write_text('runs:\n  using: composite\n  steps:\n'
                           + ''.join(f'    - uses: {use}\n' for use in composite))
     if record is not None:
-        (engineering / 'ACTION-PINS.json').write_text(json.dumps(record, indent=2) + '\n')
+        holder = root if installed else engineering
+        (holder / 'ACTION-PINS.json').write_text(json.dumps(record, indent=2) + '\n')
     subprocess.run(['git', 'init', '-q'], cwd=root, check=True, timeout=60)
     subprocess.run(['git', 'add', '-A'], cwd=root, check=True, timeout=60)
 
@@ -70,8 +78,14 @@ def stage(root):
     subprocess.run(['git', 'add', '-A'], cwd=root, check=True, timeout=60)
 
 
-def run_pins(root):
-    return subprocess.run(['bun', str(PINS)], cwd=root, capture_output=True, text=True, timeout=60)
+def run_pins(root, installed=False):
+    env = dict(os.environ)
+    if installed:
+        env['CICD_ENGINEERING'] = str(root.parent / 'installed-engineering')
+    else:
+        env.pop('CICD_ENGINEERING', None)
+    return subprocess.run(['bun', str(PINS)], cwd=root, capture_output=True, text=True,
+                          timeout=60, env=env)
 
 
 def run_updater(root, arguments, remote=LS_REMOTE):
@@ -544,7 +558,10 @@ class ActionPinUpdaterEndToEnd(unittest.TestCase):
             root = Path(directory)
             write_product(root, steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3',
                                        f'nicodes/komizo-actions/deploy@{V1_TAG} # v0.0.1'])
-            record = root / 'scripts/engineering/ACTION-PINS.json'
+            # Bootstrap writes to the root: the record is product-owned, and
+            # a product that installs the snapshot has no directory inside it
+            # to put one in.
+            record = root / 'ACTION-PINS.json'
             missing = run_updater(root, ['--check'])
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn('missing', missing.stdout + missing.stderr)
@@ -642,3 +659,124 @@ class CicdRevisionAgreement(unittest.TestCase):
     def test_a_product_that_calls_no_cicd_workflow_is_unaffected(self):
         result = self.product([CHECKOUT])
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class InstalledSnapshot(unittest.TestCase):
+    """The same gate, for a product that installs the snapshot instead of copying it.
+
+    Nothing about what is checked changes. SOURCE.json ships inside the
+    release artifact, so the invariant pins.mjs exists to enforce -- the
+    reusable-workflow pins equal the snapshot revision -- is still checkable
+    without a copy of the snapshot in the product.
+    """
+
+    def product(self, root, **kwargs):
+        write_product(root, installed=True, **kwargs)
+        return run_pins(root, installed=True)
+
+    def test_a_product_that_installed_the_snapshot_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'product'
+            root.mkdir()
+            result = self.product(root,
+                                  steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3'],
+                                  record={'repository': 'https://github.com/nicodes/komizo-actions',
+                                          'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3}}})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_pin_record_is_read_from_the_repository_root(self):
+        """It is product-owned, so it cannot live inside an installed snapshot."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'product'
+            root.mkdir()
+            self.product(root,
+                         steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3'],
+                         record={'repository': 'https://github.com/nicodes/komizo-actions',
+                                 'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3}}})
+            self.assertTrue((root / 'ACTION-PINS.json').is_file())
+            self.assertFalse((root / 'scripts/engineering').exists())
+
+    def test_drift_is_still_caught_when_the_snapshot_is_installed(self):
+        """The whole point: the check must not get weaker by moving."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'product'
+            root.mkdir()
+            result = self.product(root,
+                                  steps=[f'nicodes/komizo-actions/connect@{V8} # v0.0.8'],
+                                  record={'repository': 'https://github.com/nicodes/komizo-actions',
+                                          'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3}}})
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(V3, result.stdout + result.stderr)
+
+    def test_a_missing_pin_record_names_the_root_not_the_old_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'product'
+            root.mkdir()
+            result = self.product(root, steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3'])
+            output = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('ACTION-PINS.json', output)
+            self.assertNotIn('scripts/engineering/ACTION-PINS.json', output)
+
+    def test_an_explicit_snapshot_that_is_not_one_is_refused(self):
+        """CICD_ENGINEERING pointing somewhere wrong must fail, not fall back."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'product'
+            root.mkdir()
+            write_product(root, steps=[])
+            env = {**os.environ, 'CICD_ENGINEERING': str(Path(directory) / 'nowhere')}
+            result = subprocess.run(['bun', str(PINS)], cwd=root, capture_output=True,
+                                    text=True, timeout=60, env=env)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('not an engineering snapshot', result.stdout + result.stderr)
+
+    def test_the_declared_snapshot_wins_over_a_leftover_vendored_one(self):
+        """A product mid-migration must use what it declared, not what it forgot."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'product'
+            root.mkdir()
+            write_product(root, steps=[], installed=True)
+            stale = root / 'scripts/engineering'
+            (stale / 'helpers').mkdir(parents=True)
+            (stale / 'SOURCE.json').write_text(json.dumps(
+                {'repository': 'https://github.com/nicodes/cicd', 'revision': 'f' * 40,
+                 'files': {}}) + '\n')
+            result = run_pins(root, installed=True)
+            self.assertNotIn('f' * 40, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class PinRecordLocation(unittest.TestCase):
+    """Reading tolerates the old place; writing only ever uses the new one."""
+
+    def test_a_record_still_in_the_snapshot_directory_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3'],
+                          record={'repository': 'https://github.com/nicodes/komizo-actions',
+                                  'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3}}})
+            self.assertTrue((root / 'scripts/engineering/ACTION-PINS.json').is_file())
+            result = run_pins(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_root_record_wins_when_a_product_has_both(self):
+        """Mid-migration, the new location is the one that counts."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3'],
+                          record={'repository': 'https://github.com/nicodes/komizo-actions',
+                                  'pins': {'connect': {'tag': 'v0.0.8', 'sha': V8}}})
+            (root / 'ACTION-PINS.json').write_text(json.dumps(
+                {'repository': 'https://github.com/nicodes/komizo-actions',
+                 'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3}}}, indent=2) + '\n')
+            stage(root)
+            result = run_pins(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_bootstrap_never_writes_into_the_snapshot_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root, steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3'])
+            self.assertEqual(run_updater(root, []).returncode, 0)
+            self.assertTrue((root / 'ACTION-PINS.json').is_file())
+            self.assertFalse((root / 'scripts/engineering/ACTION-PINS.json').exists())

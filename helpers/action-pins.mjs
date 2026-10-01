@@ -14,7 +14,11 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 export const REPOSITORY = 'https://github.com/nicodes/komizo-actions';
-export const RECORD_PATH = 'scripts/engineering/ACTION-PINS.json';
+// Where a NEW record is written. Reading tolerates the old location while
+// products migrate off vendoring; writing only ever targets the root, so a
+// bootstrap never recreates a file inside an installed snapshot.
+export const RECORD_PATH = 'ACTION-PINS.json';
+export const LEGACY_RECORD_PATH = 'scripts/engineering/ACTION-PINS.json';
 
 export function parseTags(output) {
   const tags = new Map();
@@ -140,13 +144,15 @@ if (import.meta.main) {
   }, strict: true });
   const root = process.cwd();
   const uses = workflowUses(root);
-  const recordFile = path.join(root, RECORD_PATH);
+  const legacy = path.join(root, LEGACY_RECORD_PATH);
+  const recordFile = (!fs.existsSync(path.join(root, RECORD_PATH)) && fs.existsSync(legacy))
+    ? legacy : path.join(root, RECORD_PATH);
   const recordText = fs.existsSync(recordFile) ? fs.readFileSync(recordFile, 'utf8') : null;
   const record = recordText === null ? null : parseRecord(recordText);
   const tags = resolveLiveTags();
   if (values.check) {
     const findings = record === null
-      ? (uses.length > 0 ? [`${RECORD_PATH} is missing while komizo-actions is used; bootstrap it with: bun scripts/engineering/helpers/action-pins.mjs`] : [])
+      ? (uses.length > 0 ? [`${RECORD_PATH} is missing while komizo-actions is used; bootstrap it with: bun <snapshot>/helpers/action-pins.mjs`] : [])
       : drift(record, tags, uses);
     for (const finding of findings) console.log(finding);
     console.log(findings.length === 0 ? `No drift: ${uses.length} komizo-actions uses match the record and the live tags.` : `${findings.length} drift finding(s).`);

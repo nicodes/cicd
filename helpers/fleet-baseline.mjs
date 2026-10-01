@@ -29,8 +29,13 @@ import { execFileSync } from 'node:child_process';
 
 const BASELINE_URL = process.env.FLEET_BASELINE_URL
   ?? 'https://raw.githubusercontent.com/nicodes/cicd/main/FLEET.json';
-const SNAPSHOT = 'scripts/engineering/SOURCE.json';
-const PIN_RECORD = 'scripts/engineering/ACTION-PINS.json';
+// A product either vendors the snapshot or installs it; a migrating fleet
+// has both kinds at once, so each location is tried in turn. The pin record
+// is product-owned and moves to the root when the snapshot stops being a
+// directory in the repository.
+const SNAPSHOTS = ['scripts/engineering/SOURCE.json'];
+const PIN_RECORDS = ['ACTION-PINS.json', 'scripts/engineering/ACTION-PINS.json'];
+const PIN_RECORD = PIN_RECORDS[0];
 
 /** Which product is this? CI says so; a checkout has to be asked. */
 export function productName(env, remote) {
@@ -95,8 +100,20 @@ export function gather(root) {
     const full = path.join(root, relative);
     return fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : null;
   };
-  const source = read(SNAPSHOT);
-  const record = read(PIN_RECORD);
+  const first = (candidates) => {
+    for (const candidate of candidates) {
+      const found = read(candidate);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  // An installed snapshot is named by CICD_ENGINEERING and lives outside the
+  // repository, so its SOURCE.json is read from there rather than from root.
+  const installed = process.env.CICD_ENGINEERING
+    ? path.join(path.resolve(process.env.CICD_ENGINEERING), 'SOURCE.json') : null;
+  const source = (installed && fs.existsSync(installed))
+    ? fs.readFileSync(installed, 'utf8') : first(SNAPSHOTS);
+  const record = first(PIN_RECORDS);
   let actionPins = {};
   if (record) {
     const pins = JSON.parse(record).pins ?? {};

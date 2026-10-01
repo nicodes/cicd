@@ -4,9 +4,14 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { verifyDependencyCoverage } from './dependency-coverage.mjs';
+import { engineeringRoot, pinRecordPath as resolvePinRecord, describe } from './engineering-root.mjs';
 
 const root = process.cwd();
-const snapshotRoot = path.join(root, 'scripts/engineering');
+// Vendored under scripts/engineering, or installed by mise and named by
+// CICD_ENGINEERING. The per-file hash check below is worth running either
+// way: mise verifies the tarball it downloaded, not what the install
+// directory holds afterwards.
+const snapshotRoot = engineeringRoot(root);
 const snapshot = JSON.parse(fs.readFileSync(path.join(snapshotRoot, 'SOURCE.json'), 'utf8'));
 assert.equal(snapshot.repository, 'https://github.com/nicodes/cicd');
 assert.match(snapshot.revision, /^[a-f0-9]{40}$/);
@@ -164,10 +169,13 @@ for (const { file, uses } of cicdUses) {
     `${file}: calls ${called} at ${sha.slice(0, 8)} but this product vendors ${snapshot.revision.slice(0, 8)} — one product, two revisions of the same repository. Re-vendor and repin together.`);
 }
 
-const pinRecord = 'scripts/engineering/ACTION-PINS.json';
-const pinRecordPath = path.join(snapshotRoot, 'ACTION-PINS.json');
+// Product-owned, and deliberately not inside the snapshot: once the
+// snapshot is installed rather than copied, there is no product directory
+// inside it to keep this in.
+const pinRecordPath = resolvePinRecord(root);
+const pinRecord = describe(pinRecordPath, root);
 if (komizoUses.length > 0) {
-  assert.ok(fs.existsSync(pinRecordPath), `${pinRecord} is missing: this product uses ${komizoActions} actions, so it must carry the fleet pin record (bootstrap one with: bun scripts/engineering/helpers/action-pins.mjs)`);
+  assert.ok(fs.existsSync(pinRecordPath), `${pinRecord} is missing: this product uses ${komizoActions} actions, so it must carry the fleet pin record (bootstrap one with: bun ${describe(path.join(snapshotRoot, 'helpers/action-pins.mjs'), root)})`);
   const record = JSON.parse(fs.readFileSync(pinRecordPath, 'utf8'));
   assert.equal(record.repository, `https://github.com/${komizoActions}`, `${pinRecord}: repository must be https://github.com/${komizoActions}`);
   assert.ok(record.pins && typeof record.pins === 'object' && !Array.isArray(record.pins), `${pinRecord}: a pins map of action -> {tag, sha} is required`);
