@@ -38,10 +38,10 @@ Adopting it:
   and `COMPONENTS` (the space-separated image components whose refs the
   preview deploys, named `ghcr.io/<owner>/<project>-<component>:<head-sha>`).
   Do not repin the composite on copy: the template already ships the real
-  v0.0.21 pin (`eaf9336958cc7d65532878fcf6fbaad0f9582f85`, the release's
+  v0.0.24 pin (`bb0afe3d2ef7d6c834da718485256077f53c24b0`, the release's
   peeled commit SHA, never the annotated tag object). Future composite
-  updates move through the fleet pin record,
-  `scripts/engineering/ACTION-PINS.json`, as usual.
+  updates move through the fleet pin record, `ACTION-PINS.json` at the
+  repository root, as usual.
 - **Secrets and vars to set.** Exactly the deploy composite's SSH path, as
   repo-level entries: the `KOMIZO_DEPLOY_KEY` secret and the
   `KOMIZO_SERVER_URL` and `KOMIZO_KNOWN_HOSTS` variables. The workflow names
@@ -50,6 +50,19 @@ Adopting it:
   `pull-requests: write`. Image builds and their `packages: write` push stay
   in the product's own CI; this workflow only derives the refs CI already
   published for the PR's head SHA.
+- **Per-preview runtime secrets are product-owned, and they need the host.**
+  The template deploys a preview; it does not give that preview its Clerk
+  instance, its allowed origins or anything else the product's server reads
+  at boot. A product that needs those adds its own step before `Preview up`,
+  writing them over ssh into `doas /usr/local/bin/write-preview-stackenv
+  <app> <pr>` — the wrapper komizo-box installs on the host, which owns the
+  path, the 0750 root state directory and the 0600 file. Two things have to
+  be true before that step can work, and neither is visible from the
+  repository: the deploy user needs a doas rule permitting that wrapper, and
+  the repo needs the development Clerk entries (`CLERK_SECRET_KEY_DEV` as a
+  secret, `CLERK_PUBLISHABLE_KEY_DEV` as a variable) on top of the three the
+  deploy path already requires. Without the doas rule the step fails with
+  `doas: Operation not permitted`, which says nothing about what is missing.
 - **The registry wiring is required — do not delete it on copy.** Since
   v0.0.21 the up invocation must pass `registry-user: ${{ github.actor }}`
   and `registry-token: ${{ secrets.GITHUB_TOKEN }}`, and the preview-up job
@@ -130,13 +143,14 @@ The push trigger on `ci.yml` is load-bearing here: there is no CD, and the
 host's build never runs the assertions, so this workflow is the only thing
 that gates a merge to main.
 
-Vendor `helpers/` and `tests/` with the full source revision and SHA-256 inventory
-in `scripts/engineering/SOURCE.json`, as described in the parent README. Keep the
-normative policy in the September workspace plan. Use these product-owned scripts:
+Install the engineering snapshot rather than vendoring it: `.mise.toml` pins one
+version and its sha256, `scripts/engineering-env.sh` resolves it into
+`CICD_ENGINEERING`, and nothing is copied into the product. Keep the normative
+policy in the September workspace plan. Use these product-owned scripts:
 
 | Script | Required behavior |
 | --- | --- |
-| `scripts/test.sh` | Frozen Bun install, pin checks, Actionlint, ShellCheck, helper tests, Expo compatibility, TypeScript, lint, unit tests and product contracts. For every applicable Go module: formatting, vet and full integration/unit tests with `-race -count=1`; production-equivalent PocketBase fixtures. |
+| `scripts/test.sh` | Frozen Bun install, pin checks, Actionlint, ShellCheck, helper tests, Expo compatibility, TypeScript, lint, unit tests and product contracts. For every applicable Go module: formatting, vet and full integration/unit tests with `-race -count=1`; production-equivalent database fixtures. |
 | `scripts/build.sh` | Exact-head web export and runtime image build; scan actual binaries and record the checked image archive with `release.py`. |
 | `scripts/vuln.sh` | Online source dependency scans, fail closed on scanner failure and applicable vulnerabilities. |
 | `scripts/e2e.sh` | Real Playwright core journey against built artifacts. Full-stack uses a signed isolated issuer, real API and disposable database, rejects fixture auth in production images, and exercises the real-image restore helper. |
