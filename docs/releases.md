@@ -72,6 +72,34 @@ on that exact commit, and that the tree still matches what `prepare`
 generated — a change introduced during merge fails closed. Then it creates
 the annotated tag and the GitHub release.
 
+## Moving the fleet onto one
+
+A release is not adopted until every product is on it. `FLEET.json` names one
+commit and `helpers/fleet-baseline.mjs` holds all nine to it, so adoption is a
+sweep rather than nine independent decisions.
+
+```sh
+python3 scripts/fanout.py 0.7.0           # shows what it would do
+python3 scripts/fanout.py 0.7.0 --push    # branches and pull requests
+```
+
+For each product it moves BOTH pins -- the `.mise.toml`
+`"http:cicd-engineering"` version and checksum, and every
+`nicodes/cicd/.github/workflows/*.yml@<sha>` call -- because `helpers/pins.mjs`
+requires them to name one commit. A product already on the version is reported
+and skipped; one with no snapshot entry, or two, is refused rather than
+half-bumped.
+
+**This is not a workflow, for the same reason `prepare` is not.** The bump
+edits files under `.github/workflows`, and `GITHUB_TOKEN` is refused when it
+pushes one. Doing it in Actions would need a PAT or App credential with
+`workflows: write` on nine repositories across three owners -- a standing
+push-to-any-workflow secret, which is exactly what this repository has
+decided not to hold. So the fan-out runs on the operator's machine with the
+operator's own rights. What it removes is the hand-work, not the human: nine
+clones, nine identical edits, nine pull requests, each of which is a chance
+to get one of them subtly wrong.
+
 ## Consuming one
 
 `helpers/pins.mjs` enforces the half that belongs to the product: every
