@@ -129,3 +129,34 @@ jobs:
           gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --title "$VERSION" \
             --notes "Helper checkouts pinned. Consumers pin the commit with the version in a trailing comment; see docs/releases.md."
+
+      - name: Attach the engineering snapshot products install
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          MERGED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          # Built from the TAGGED commit, not from the checkout, so the
+          # artifact is a function of the tag and nothing else. The builder is
+          # byte-reproducible, so anybody can rebuild this from the tag and
+          # compare the sha256 with the one a product has pinned.
+          name="cicd-engineering-$VERSION.tar.gz"
+          digest=$(python3 helpers/engineering-artifact.py --revision "$MERGED_SHA" --output "$name")
+          echo "$digest  $name" > "$name.sha256"
+          gh release upload "$VERSION" "$name" "$name.sha256" --repo "$GITHUB_REPOSITORY"
+
+          # --notes-file, not a heredoc inside this already-indented block:
+          # the closing delimiter would have to sit at column 0 to be seen.
+          {
+            echo 'Helper checkouts pinned. See docs/releases.md.'
+            echo
+            echo 'Products install the engineering snapshot through mise instead of vendoring it:'
+            echo
+            echo '    [tools]'
+            printf '    "http:cicd-engineering" = { version = "%s", url = "https://github.com/%s/releases/download/v{{ version }}/cicd-engineering-v{{ version }}.tar.gz", checksum = "sha256:%s" }\n' \
+              "${VERSION#v}" "$GITHUB_REPOSITORY" "$digest"
+          } > release-notes.md
+          gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+          echo "attached $name sha256:$digest"
