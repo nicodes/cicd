@@ -268,3 +268,41 @@ class FleetDeclarations(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RecognisesStructureNotSpelling(unittest.TestCase):
+    """The rule is about the build tag, not about a magic string.
+
+    The gate failed gdam's genuine local path because gdam writes
+    "sk_test_local_development_only" with underscores where termcade uses a
+    hyphen. A product should not have to spell a constant a particular way
+    to satisfy a structural rule.
+    """
+
+    def test_a_tagged_bypass_counts_however_it_names_its_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            (product.root / 'api/internal/clerkauth/local_auth.go').write_text(
+                '//go:build localdev\n\npackage clerkauth\n\nimport "os"\n\n'
+                'func local() string {\n\tif os.Getenv("GDAM_LOCAL_AUTH") != "1" {\n'
+                '\t\treturn ""\n\t}\n\treturn "sk_test_local_development_only"\n}\n')
+            self.assertEqual(failures(check(directory, CLERK_API)), [])
+
+    def test_an_untagged_grant_still_fails_even_beside_a_tagged_one(self):
+        """Having a proper local path does not excuse a second, shipped one."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.go('api/cmd/api/auth.go',
+                       'package main\n\nimport "os"\n\nconst devClerkID = "dev_local_user"\n\n'
+                       'func auth() string {\n\tif os.Getenv("APP_DEV") == "1" {\n'
+                       '\t\treturn devClerkID\n\t}\n\treturn ""\n}\n')
+            said = ' '.join(failures(check(directory, CLERK_API)))
+            self.assertIn('api/cmd/api/auth.go', said)
+
+    def test_the_refusal_file_is_not_mistaken_for_the_bypass(self):
+        """`//go:build !localdev` contains the word; it is the opposite file."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            (product.root / 'api/internal/clerkauth/local_auth.go').unlink()
+            said = ' '.join(failures(check(directory, CLERK_API)))
+            self.assertIn('no local development identity exists', said)
