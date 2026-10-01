@@ -81,7 +81,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nicodes/cicd
-          ref: 40069b55a5dcb741981c90b8f7ef9815e49af67a # backup helpers with the 404-as-absent PUT fix (bump-along rule, see README)
+          ref: 2ba2ffac5b004eaffc2ed067916ec876e203c2d5 # backup helpers with the 404-as-absent PUT fix (bump-along rule, see README)
           path: .cicd
           sparse-checkout: helpers
           persist-credentials: false
@@ -151,7 +151,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nicodes/cicd
-          ref: 40069b55a5dcb741981c90b8f7ef9815e49af67a # backup helpers with the 404-as-absent PUT fix (bump-along rule, see README)
+          ref: 2ba2ffac5b004eaffc2ed067916ec876e203c2d5 # backup helpers with the 404-as-absent PUT fix (bump-along rule, see README)
           path: .cicd
           sparse-checkout: helpers
           persist-credentials: false
