@@ -220,7 +220,55 @@ class PreviewHalf(unittest.TestCase):
             product.workflow('pr-preview.yml',
                              'jobs:\n  p:\n    steps:\n      - env:\n          CLERK_SECRET_KEY_DEV: x\n')
             said = ' '.join(failures(check(directory, CLERK_API)))
-            self.assertIn('CLERK_AUTHORIZED_PARTIES', said)
+            self.assertIn('never computes a per-PR origin', said)
+
+    def test_an_origin_spelled_another_way_still_counts(self):
+        """astry hands one parsed origin policy to both CORS and Clerk's
+        authorized-party handler. That is the contract, correctly kept, under
+        a different name -- and an earlier version of this rule failed it for
+        not saying CLERK_AUTHORIZED_PARTIES. The rule asks what the value is
+        and where it goes, never what it is called."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.workflow('pr-preview.yml',
+                             'jobs:\n  p:\n    steps:\n      - run: |\n'
+                             '          app_origin="https://pr-${PR_NUMBER}.preview.example"\n'
+                             "          printf 'CORS_ALLOWED_ORIGINS=%s\\n' \"$app_origin\"\n"
+                             '        env:\n          CLERK_SECRET_KEY_DEV: x\n')
+            product.go('api/internal/clerkauth/azp.go',
+                       'package clerkauth\n\nimport "os"\n\n'
+                       '// AuthorizedPartyHandler takes the same policy CORS uses.\n'
+                       'func policy() string { return os.Getenv("CORS_ALLOWED_ORIGINS") }\n')
+            self.assertEqual(failures(check(directory, CLERK_API)), [])
+
+    def test_a_preview_origin_that_does_not_vary_per_pull_request_is_refused(self):
+        """A fixed origin in a preview workflow is production's origin: every
+        preview would answer for the same Clerk audience, and for each other."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.workflow('pr-preview.yml',
+                             'jobs:\n  p:\n    steps:\n      - env:\n'
+                             '          CLERK_SECRET_KEY_DEV: x\n'
+                             '          CLERK_AUTHORIZED_PARTIES: https://example.com\n')
+            said = ' '.join(failures(check(directory, CLERK_API)))
+            self.assertIn('does not vary per pull request', said)
+
+    def test_an_origin_the_server_never_reads_is_refused(self):
+        """Computing the right origin into a variable nothing consumes leaves
+        the azp check deciding on something else."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.workflow('pr-preview.yml',
+                             'jobs:\n  p:\n    steps:\n      - run: |\n'
+                             '          app_origin="https://pr-${PR_NUMBER}.preview.example"\n'
+                             "          printf 'UNUSED_ORIGINS=%s\\n' \"$app_origin\"\n"
+                             '        env:\n          CLERK_SECRET_KEY_DEV: x\n')
+            product.go('api/internal/clerkauth/azp.go',
+                       'package clerkauth\n\nimport "os"\n\n'
+                       'func policy() string { return os.Getenv("CORS_ALLOWED_ORIGINS") }\n'
+                       '// AuthorizedPartyHandler consumes it.\n')
+            said = ' '.join(failures(check(directory, CLERK_API)))
+            self.assertIn('no Go source reads any of them', said)
 
     def test_no_preview_workflow_is_reported_but_does_not_fail(self):
         """The preview half cannot apply to a product that has no previews."""
