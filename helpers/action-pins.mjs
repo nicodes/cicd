@@ -183,6 +183,27 @@ if (import.meta.main) {
       assert.ok(tags.has(tag), `record: ${action}: tag ${tag} no longer exists upstream`);
       return [action, { tag, sha: tags.get(tag).commit }];
     }));
+
+    // An action the product has started using but the record has never
+    // heard of. Without this the updater could only ever refresh what was
+    // already recorded, so adopting a new komizo action meant editing the
+    // record by hand -- which this file exists to be the only writer of.
+    // cazper hit it adopting komizo-actions/preview.
+    //
+    // It joins at the tag the rest of the record is on, because the record's
+    // whole purpose is that the fleet agrees on one. A record already
+    // disagreeing with itself is not a safe thing to guess from, so that is
+    // refused and named instead.
+    const recorded = new Set(Object.keys(pins));
+    const adopted = [...new Set(uses.map(use => use.action))].filter(action => !recorded.has(action)).sort();
+    if (adopted.length > 0) {
+      const existing = [...new Set(Object.values(pins).map(pin => pin.tag))];
+      const tag = release ?? (existing.length === 1 ? existing[0] : null);
+      assert.ok(tag, `cannot place ${adopted.join(', ')}: the record is already split across ` +
+                     `${existing.join(', ')}. Bring it onto one tag first, or pass --latest.`);
+      assert.ok(tags.has(tag), `cannot place ${adopted.join(', ')}: tag ${tag} does not exist upstream`);
+      for (const action of adopted) pins[action] = { tag, sha: tags.get(tag).commit };
+    }
   }
   fs.mkdirSync(path.dirname(recordFile), { recursive: true });
   fs.writeFileSync(recordFile, renderRecord(pins));

@@ -780,3 +780,78 @@ class PinRecordLocation(unittest.TestCase):
             self.assertEqual(run_updater(root, []).returncode, 0)
             self.assertTrue((root / 'ACTION-PINS.json').is_file())
             self.assertFalse((root / 'scripts/engineering/ACTION-PINS.json').exists())
+
+
+class AdoptingANewAction(unittest.TestCase):
+    """A product that starts using a komizo action the record has never seen.
+
+    Before this, the updater could only refresh actions already recorded, so
+    adopting a new one meant hand-editing the file this helper exists to be
+    the only writer of. cazper hit it adopting komizo-actions/preview.
+    """
+
+    def product(self, root, steps, record):
+        write_product(root, steps=steps, record=record)
+        return run_updater(root, [])
+
+    def record_of(self, root):
+        # write_product puts it in the snapshot directory; the updater writes
+        # back to whichever location the product already uses.
+        for candidate in (root / 'ACTION-PINS.json', root / 'scripts/engineering/ACTION-PINS.json'):
+            if candidate.is_file():
+                return json.loads(candidate.read_text())['pins']
+        raise AssertionError('no pin record was written')
+
+    def test_a_newly_used_action_joins_the_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.product(root,
+                         [f'nicodes/komizo-actions/connect@{V10} # v0.0.10',
+                          f'nicodes/komizo-actions/preview@{V10} # v0.0.10'],
+                         {'repository': 'https://github.com/nicodes/komizo-actions',
+                          'pins': {'connect': {'tag': 'v0.0.10', 'sha': V10}}})
+            pins = self.record_of(root)
+            self.assertIn('preview', pins)
+            self.assertEqual(pins['preview'], {'tag': 'v0.0.10', 'sha': V10})
+
+    def test_it_joins_at_the_tag_the_rest_of_the_record_is_on(self):
+        """Not the newest upstream tag: the record's point is that the fleet
+        agrees on one, and adopting an action must not move the others."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.product(root,
+                         [f'nicodes/komizo-actions/connect@{V3} # v0.0.3',
+                          f'nicodes/komizo-actions/preview@{V3} # v0.0.3'],
+                         {'repository': 'https://github.com/nicodes/komizo-actions',
+                          'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3}}})
+            pins = self.record_of(root)
+            self.assertEqual(pins['preview']['tag'], 'v0.0.3')
+            self.assertEqual(pins['connect']['tag'], 'v0.0.3', 'the existing pin must not move')
+
+    def test_a_record_split_across_tags_is_refused_rather_than_guessed_from(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.product(root,
+                                  [f'nicodes/komizo-actions/connect@{V3} # v0.0.3',
+                                   f'nicodes/komizo-actions/preview@{V3} # v0.0.3'],
+                                  {'repository': 'https://github.com/nicodes/komizo-actions',
+                                   'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3},
+                                            'deploy': {'tag': 'v0.0.8', 'sha': V8}}})
+            self.assertNotEqual(result.returncode, 0)
+            output = result.stdout + result.stderr
+            self.assertIn('split across', output)
+            self.assertIn('preview', output)
+
+    def test_latest_places_a_new_action_with_everything_else(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_product(root,
+                          steps=[f'nicodes/komizo-actions/connect@{V3} # v0.0.3',
+                                 f'nicodes/komizo-actions/preview@{V3} # v0.0.3'],
+                          record={'repository': 'https://github.com/nicodes/komizo-actions',
+                                  'pins': {'connect': {'tag': 'v0.0.3', 'sha': V3},
+                                           'deploy': {'tag': 'v0.0.8', 'sha': V8}}})
+            self.assertEqual(run_updater(root, ['--latest']).returncode, 0)
+            pins = self.record_of(root)
+            self.assertEqual({pin['tag'] for pin in pins.values()}, {'v0.0.10'})
+            self.assertIn('preview', pins)
