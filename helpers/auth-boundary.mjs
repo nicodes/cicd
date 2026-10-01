@@ -86,55 +86,44 @@ function noProvider(root, files) {
  * nobody.
  */
 function bypassIsCompiledOut(root) {
-  const go = sourceFiles(root, { extensions: ['.go'] })
-    .filter(file => !file.endsWith('_test.go'));
-  // A file is the local path if it is BUILD-TAGGED for it. Matching on the
-  // identity string instead was wrong twice over: it depended on a product
-  // spelling a constant a particular way -- gdam writes
-  // "sk_test_local_development_only" with underscores where termcade uses a
-  // hyphen -- and it is the tag, not the string, that the rule is actually
-  // about.
+  const go = sourceFiles(root, { extensions: ['.go'] }).filter(file => !file.endsWith('_test.go'));
+
+  // STRUCTURE, NOT CONTENT. Earlier versions of this rule tried to find the
+  // grant by pattern -- a dev identity constant, a switch name -- and were
+  // wrong three times running: they failed termcade over a client-side
+  // variable, passed products that had no local path at all, refused gdam
+  // because it spells a key with underscores, and finally flagged the call
+  // site of a correctly tagged grant because the helper was named
+  // devIdentity. Every one of those was a guess about content.
+  //
+  // What source can actually establish is structure: a local path exists and
+  // is behind the tag, and a counterpart refuses the switch when it is not.
+  // Whether a shipped binary can produce a development identity is a
+  // question about the artifact, and belongs to the image scan, which takes
+  // the built thing apart instead of reading about it.
   const tagged = go.filter(file => /^\/\/go:build [^\n]*\blocaldev\b/m.test(read(root, file)) &&
                                    !/^\/\/go:build [^\n]*!localdev/m.test(read(root, file)));
-  // An untagged file that hands out a development identity is the failure
-  // this rule exists for, whatever else the product does.
-  const grants = go.filter(file => {
-    if (tagged.includes(file)) return false;
-    const body = read(root, file);
-    return /(LOCAL_AUTH|_DEV\b)/.test(body) &&
-           /(dev[A-Za-z]*(ClerkID|UserID|Identity)|local[-_]development|LOCAL_USER_ID)/.test(body);
-  });
-  if (!tagged.length && !grants.length) {
-    // Passing here would be backwards. The contract says local development
-    // uses no Clerk tenant; a product with no bypass at all meets that by
-    // having no local path, which in practice means developers point a
-    // laptop at a real Clerk instance -- the thing the contract forbids.
-    return [{
-      level: 'fail',
-      text: 'no local development identity exists, so working on this product locally means ' +
-            'pointing at a real Clerk instance. The contract is that local uses no Clerk tenant: ' +
-            "add a bypass behind `//go:build localdev`, as termcade's clerkauth/local_auth.go does.",
-    }];
-  }
-  const problems = [];
-  for (const file of grants) {
-    problems.push({
-      level: 'fail',
-      text: `${file} grants a development identity but carries no \`//go:build localdev\` tag, ` +
-            `so it is compiled into the production binary and is one environment variable from ` +
-            `being live. Move it behind the tag, as termcade's clerkauth/local_auth.go does.`,
-    });
-  }
   const refusal = go.some(file => {
     const body = read(root, file);
-    return /^\/\/go:build !localdev/m.test(body) && /LOCAL_AUTH|_DEV\b/.test(body) &&
+    return /^\/\/go:build [^\n]*!localdev/m.test(body) &&
+           /(LOCAL_AUTH|_DEV\b)/.test(body) &&
            /(return .*(fmt\.Errorf|errors\.New)|panic\()/.test(body);
   });
+
+  const problems = [];
+  if (!tagged.length) {
+    problems.push({
+      level: 'fail',
+      text: 'no local development path behind `//go:build localdev`, so working on this ' +
+            'product locally means pointing at a real Clerk instance. The contract is that ' +
+            "local uses no Clerk tenant: add one, as termcade's clerkauth/local_auth.go does.",
+    });
+  }
   if (!refusal) {
     problems.push({
       level: 'fail',
-      text: 'no `//go:build !localdev` counterpart refuses to start when the local switch is set. ' +
-            'Without it a production binary handed the variable ignores it silently, and nothing ' +
+      text: 'no `//go:build !localdev` counterpart refuses the local switch. Without it a ' +
+            'production binary handed the variable ignores it silently, and nothing ' +
             'distinguishes "the bypass is absent" from "the bypass did not trigger".',
     });
   }

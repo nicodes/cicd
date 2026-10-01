@@ -117,16 +117,21 @@ class CompliantProduct(unittest.TestCase):
 
 
 class LocalBypass(unittest.TestCase):
-    def test_a_runtime_flag_is_refused_because_it_ships(self):
+    def test_a_runtime_flag_with_no_tagged_path_is_refused(self):
+        """A product whose only dev mode is a runtime flag has no tagged
+        path, which is what this reports. It does not try to find the flag:
+        locating a grant by pattern is what made this rule wrong three times
+        over. Whether a shipped binary can produce a development identity is
+        a question for the image scan, which takes the artifact apart."""
         with tempfile.TemporaryDirectory() as directory:
-            product = Product(directory).compliant()
+            product = Product(directory)
             product.go('api/cmd/api/auth.go',
                        'package main\n\nimport "os"\n\nconst devClerkID = "dev_local_user"\n\n'
                        'func auth() string {\n\tif os.Getenv("APP_DEV") == "1" {\n'
                        '\t\treturn devClerkID\n\t}\n\treturn ""\n}\n')
+            product.workflow('cd.yml', 'jobs:\n  d:\n    steps:\n      - env:\n          CLERK_SECRET_KEY_PROD: y\n')
             said = ' '.join(failures(check(directory, CLERK_API)))
-            self.assertIn('api/cmd/api/auth.go', said)
-            self.assertIn('go:build localdev', said)
+            self.assertIn('no local development path', said)
 
     def test_having_no_local_path_at_all_is_a_failure_not_a_pass(self):
         """The first version passed this, which is backwards: no bypass means
@@ -136,7 +141,7 @@ class LocalBypass(unittest.TestCase):
             (product.root / 'api/internal/clerkauth/local_auth.go').unlink()
             (product.root / 'api/internal/config/local_auth_disabled.go').unlink()
             said = ' '.join(failures(check(directory, CLERK_API)))
-            self.assertIn('no local development identity exists', said)
+            self.assertIn('no local development path', said)
 
     def test_a_bypass_with_no_refusal_counterpart_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -288,16 +293,17 @@ class RecognisesStructureNotSpelling(unittest.TestCase):
                 '\t\treturn ""\n\t}\n\treturn "sk_test_local_development_only"\n}\n')
             self.assertEqual(failures(check(directory, CLERK_API)), [])
 
-    def test_an_untagged_grant_still_fails_even_beside_a_tagged_one(self):
-        """Having a proper local path does not excuse a second, shipped one."""
+    def test_a_call_site_of_a_tagged_grant_is_not_a_finding(self):
+        """The rule flagged `devIdentity()` -- the CALL of a correctly tagged
+        grant -- because the name matched its pattern. Structure, not names."""
         with tempfile.TemporaryDirectory() as directory:
             product = Product(directory).compliant()
             product.go('api/cmd/api/auth.go',
-                       'package main\n\nimport "os"\n\nconst devClerkID = "dev_local_user"\n\n'
-                       'func auth() string {\n\tif os.Getenv("APP_DEV") == "1" {\n'
-                       '\t\treturn devClerkID\n\t}\n\treturn ""\n}\n')
-            said = ' '.join(failures(check(directory, CLERK_API)))
-            self.assertIn('api/cmd/api/auth.go', said)
+                       'package main\n\nimport "os"\n\n'
+                       'func auth(dev bool) string {\n'
+                       '\tif identity, ok := devIdentity(); ok && dev && os.Getenv("APP_DEV") == "1" {\n'
+                       '\t\treturn identity\n\t}\n\treturn ""\n}\n')
+            self.assertEqual(failures(check(directory, CLERK_API)), [])
 
     def test_the_refusal_file_is_not_mistaken_for_the_bypass(self):
         """`//go:build !localdev` contains the word; it is the opposite file."""
@@ -305,4 +311,4 @@ class RecognisesStructureNotSpelling(unittest.TestCase):
             product = Product(directory).compliant()
             (product.root / 'api/internal/clerkauth/local_auth.go').unlink()
             said = ' '.join(failures(check(directory, CLERK_API)))
-            self.assertIn('no local development identity exists', said)
+            self.assertIn('no local development path', said)
