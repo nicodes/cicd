@@ -66,9 +66,14 @@ export function compare(product, fleet, facts) {
   const baseline = fleet.baseline;
 
   if (facts.snapshotRevision !== baseline.snapshot_revision) {
-    problems.push(`vendored cicd revision is ${facts.snapshotRevision ?? '(absent)'}, ` +
-      `the fleet is on ${baseline.snapshot_revision}. Re-vendor with ` +
-      `helpers/vendor-snapshot.py --revision ${baseline.snapshot_revision}`);
+    // The remedy differs by how this product gets the snapshot, and telling
+    // somebody to re-vendor a snapshot they install sends them looking for a
+    // directory that is not there.
+    const remedy = facts.snapshotSource === 'installed'
+      ? `Pin the .mise.toml "http:cicd-engineering" version to the release whose commit is ${baseline.snapshot_revision}, and repin the cicd workflow calls to match`
+      : `Re-vendor with helpers/vendor-snapshot.py --revision ${baseline.snapshot_revision}`;
+    problems.push(`this product's cicd revision is ${facts.snapshotRevision ?? '(absent)'}, ` +
+      `the fleet is on ${baseline.snapshot_revision}. ${remedy}`);
   }
 
   const expected = { ...baseline.tools.shared, ...(baseline.tools[entry.profile] ?? {}) };
@@ -111,8 +116,9 @@ export function gather(root) {
   // repository, so its SOURCE.json is read from there rather than from root.
   const installed = process.env.CICD_ENGINEERING
     ? path.join(path.resolve(process.env.CICD_ENGINEERING), 'SOURCE.json') : null;
-  const source = (installed && fs.existsSync(installed))
-    ? fs.readFileSync(installed, 'utf8') : first(SNAPSHOTS);
+  const fromInstall = installed && fs.existsSync(installed);
+  const source = fromInstall ? fs.readFileSync(installed, 'utf8') : first(SNAPSHOTS);
+  const snapshotSource = fromInstall ? 'installed' : (source ? 'vendored' : null);
   const record = first(PIN_RECORDS);
   let actionPins = {};
   if (record) {
@@ -133,6 +139,7 @@ export function gather(root) {
   walk(path.join(root, '.github'));
   return {
     snapshotRevision: source ? JSON.parse(source).revision : null,
+    snapshotSource,
     tools: readTools(read('.mise.toml') ?? ''),
     hasPinRecord: record !== null,
     actionPins,

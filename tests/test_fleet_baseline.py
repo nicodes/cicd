@@ -171,3 +171,27 @@ class TheRealBaseline(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RemedyMatchesTheLayout(unittest.TestCase):
+    """Telling somebody to re-vendor a snapshot they install sends them
+    looking for a directory that is not there."""
+
+    def drifted(self, source):
+        return dict(GOOD, snapshotRevision='b' * 40, snapshotSource=source)
+
+    def test_an_installed_product_is_told_to_move_its_mise_pin(self):
+        said = ' '.join(compare('org/service', self.drifted('installed')))
+        self.assertIn('http:cicd-engineering', said)
+        self.assertNotIn('vendor-snapshot.py', said)
+
+    def test_a_vendoring_product_is_still_told_to_re_vendor(self):
+        said = ' '.join(compare('org/service', self.drifted('vendored')))
+        self.assertIn('vendor-snapshot.py', said)
+        self.assertNotIn('http:cicd-engineering', said)
+
+    def test_the_revision_itself_is_compared_the_same_way_either_way(self):
+        """Mechanism may differ across the fleet; the commit may not."""
+        for source in ('installed', 'vendored'):
+            with self.subTest(source=source):
+                self.assertEqual(compare('org/service', dict(GOOD, snapshotSource=source)), [])
