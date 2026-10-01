@@ -109,7 +109,11 @@ class DependabotReusableWorkflow(unittest.TestCase):
                                             'persist-credentials': False})
         policy = self.steps['Apply the dependency review policy']
         self.assertEqual(policy['if'], "steps.metadata.outcome == 'success'")
-        self.assertEqual(policy['run'], 'python3 scripts/engineering/helpers/dependency-policy.py')
+        # Stronger than before, not weaker: the helper now comes from a
+        # pinned nicodes/cicd checkout rather than from the caller's base
+        # tree, so it is fixed by this workflow's own release and not by
+        # whatever the product has on main.
+        self.assertEqual(policy['run'], 'python3 .cicd/helpers/dependency-policy.py')
         self.assertEqual(policy['env'], {'DEPENDENCY_NAMES': '${{ steps.metadata.outputs.dependency-names }}',
                                          'PREVIOUS_VERSION': '${{ steps.metadata.outputs.previous-version }}',
                                          'NEW_VERSION': '${{ steps.metadata.outputs.new-version }}',
@@ -119,7 +123,7 @@ class DependabotReusableWorkflow(unittest.TestCase):
     def test_merge_step_is_gated_and_pins_the_exact_head(self):
         merge = self.steps['Wait for every check and merge the verified head']
         self.assertEqual(merge['if'], "steps.policy.outputs.eligible == 'true'")
-        self.assertEqual(merge['run'], 'python3 scripts/engineering/helpers/merge-checked.py')
+        self.assertEqual(merge['run'], 'python3 .cicd/helpers/merge-checked.py')
         self.assertEqual(merge['env'], {'GH_TOKEN': '${{ github.token }}',
                                         'PR_NUMBER': '${{ github.event.pull_request.number }}',
                                         'EXPECTED_HEAD': '${{ github.event.pull_request.head.sha }}',
@@ -151,3 +155,4 @@ class DependabotReusableWorkflow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

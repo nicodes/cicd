@@ -105,11 +105,11 @@ class VulnerabilityScanWorkflowTests(unittest.TestCase):
         self.assertEqual(self.scan['permissions'],
                          {'contents': 'read', 'packages': 'read', 'deployments': 'read'})
 
-    def test_deployed_scan_runs_the_callers_vendored_helper_for_the_project(self):
+    def test_deployed_scan_runs_this_workflows_own_helper_for_the_project(self):
         deployed = next(step for step in self.scan['steps'] if 'run' in step
                         and 'scan-deployed.py' in step['run'])
         self.assertEqual(deployed['run'],
-                         'python3 scripts/engineering/helpers/scan-deployed.py --project ${{ inputs.project }}'
+                         'python3 .cicd/helpers/scan-deployed.py --project ${{ inputs.project }}'
                          ' --repository "$SCAN_DEPLOYED_REPOSITORY"')
         self.assertEqual(deployed['env'], {'GH_TOKEN': '${{ github.token }}',
                                            'SCAN_DEPLOYED_REPOSITORY': '${{ inputs.repository }}'})
@@ -175,8 +175,16 @@ class ToolWatchWorkflowTests(unittest.TestCase):
                       and 'repository' not in step.get('with', {}))
         self.assertIs(caller['with']['persist-credentials'], False)
 
-    def test_watch_runs_the_callers_vendored_helper_with_the_caller_token(self):
-        self.assertIn('python3 scripts/engineering/helpers/watch-tools.py', run_steps(self.watch))
+    def test_watch_runs_this_workflows_own_helper_with_the_caller_token(self):
+        """The helper comes with the workflow, not from the caller's tree.
+
+        It used to run the caller's vendored copy, which tied this workflow to
+        a layout every product had to keep. A product that installs the
+        snapshot has no such path, and the version that belongs with a
+        reusable workflow is the one released alongside it -- which the
+        caller still chooses, by the SHA it pins the workflow at.
+        """
+        self.assertIn('python3 .cicd/helpers/watch-tools.py', run_steps(self.watch))
         watch_run = next(step for step in self.watch['steps'] if 'run' in step)
         self.assertEqual(watch_run['env'], {'GH_TOKEN': '${{ github.token }}'})
         self.assertEqual(watch_run['timeout-minutes'], 12)
@@ -289,3 +297,57 @@ class HelperCheckoutPins(unittest.TestCase):
             + ' -- cut a release (docs/releases.md) rather than bumping by hand',
         )
 
+
+
+class HelperProvenance(unittest.TestCase):
+    """Every helper a reusable workflow runs comes from a pinned cicd checkout.
+
+    These workflows execute inside the caller's repository with the caller's
+    token. Reading the helper out of the caller's working tree made the code
+    this organisation runs on somebody's dependabot pull request a function
+    of whatever that product had checked out -- and it tied every product to
+    keeping a scripts/engineering directory, which is exactly what a product
+    that installs the snapshot no longer has.
+
+    The caller still chooses the version: it pins the workflow by SHA, and a
+    release repins the helper checkouts to match.
+    """
+
+    REUSABLE = ('dependabot.yml', 'tools.yml', 'vuln.yml', 'backup.yml')
+
+    def test_no_reusable_workflow_runs_a_helper_from_the_callers_tree(self):
+        for name in self.REUSABLE:
+            with self.subTest(workflow=name):
+                self.assertNotIn('scripts/engineering/', (WORKFLOWS/name).read_text())
+
+    def test_a_workflow_that_runs_a_cicd_helper_checks_one_out_first(self):
+        """Otherwise the run fails at the point of use, in someone else's repository."""
+        for name in self.REUSABLE:
+            document = load(name) or {}
+            for job_name, job in (document.get('jobs') or {}).items():
+                steps = job.get('steps') or []
+                runs = [i for i, step in enumerate(steps)
+                        if '.cicd/helpers/' in str(step.get('run', ''))]
+                if not runs:
+                    continue
+                checkouts = [i for i, step in enumerate(steps)
+                             if (step.get('with') or {}).get('path') == '.cicd']
+                with self.subTest(workflow=name, job=job_name):
+                    self.assertTrue(checkouts, 'runs a .cicd helper without checking .cicd out')
+                    self.assertLess(min(checkouts), min(runs), 'the checkout must precede the run')
+
+    def test_every_cicd_checkout_is_pinned_and_carries_no_credentials(self):
+        for name in self.REUSABLE:
+            document = load(name) or {}
+            for job_name, job in (document.get('jobs') or {}).items():
+                for step in (job.get('steps') or []):
+                    with_ = step.get('with') or {}
+                    if with_.get('repository') != 'nicodes/cicd':
+                        continue
+                    with self.subTest(workflow=name, job=job_name):
+                        self.assertRegex(str(with_.get('ref', '')), HELPER_REF)
+                        self.assertIs(with_.get('persist-credentials'), False)
+                        # backup.yml writes it without the trailing slash.
+                        # What matters is that the checkout is narrowed to
+                        # helpers, not which spelling says so.
+                        self.assertIn(with_.get('sparse-checkout'), ('helpers', 'helpers/'))
