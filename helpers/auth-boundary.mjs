@@ -186,21 +186,63 @@ function keysDoNotCross(root) {
   return problems;
 }
 
-/** Preview must name its own origin, not inherit production's. */
-function previewNamesItsOwnOrigin(root) {
+/**
+ * Preview must name its own origin, not inherit production's.
+ *
+ * The rule is structural, not a name match. A product may spell the azp
+ * allowlist `CLERK_AUTHORIZED_PARTIES`, or it may parse one origin policy
+ * and hand the same value to both CORS and Clerk's authorized-party
+ * handler -- astry does the latter, and an earlier version of this check
+ * failed it for using a different, equally correct name. So: find the
+ * variables the preview workflow writes a computed per-PR origin into, and
+ * require the server to route one of them into its azp decision.
+ */
+function previewNamesItsOwnOrigin(root, files) {
   const workflows = sourceFiles(root, { within: ['.github'], extensions: ['.yml', '.yaml'] })
     .filter(file => /preview/i.test(file));
   if (!workflows.length) {
     return [{ level: 'info', text: 'no preview workflow; the preview half of the contract does not apply yet' }];
   }
+  const go = files.filter(file => file.endsWith('.go'));
+  const azpDecision = go.filter(file => /AuthorizedPartyHandler|authorizedPart|\bazp\b/i.test(read(root, file)));
+  const goBodies = go.map(file => read(root, file)).join('\n');
+
   const problems = [];
   for (const file of workflows) {
     const body = read(root, file);
     if (!/CLERK_SECRET_KEY_DEV/.test(body)) {
       problems.push({ level: 'fail', text: `${file} deploys a preview without CLERK_SECRET_KEY_DEV; a preview must use the development instance.` });
     }
-    if (!/CLERK_AUTHORIZED_PARTIES/.test(body)) {
-      problems.push({ level: 'fail', text: `${file} sets no CLERK_AUTHORIZED_PARTIES, so the preview origin is not the one Clerk accepts tokens for.` });
+    // Names the workflow assigns a computed origin to, on one line:
+    // `printf 'NAME=%s\n' "$app_origin"`, `NAME: ${{ ... }}.preview...`, etc.
+    const looksLikeOrigin = line => /https?:\/\//.test(line) || /\$\{?[A-Za-z0-9_]*origin/i.test(line);
+    const carriers = new Set();
+    for (const line of body.split('\n')) {
+      if (!looksLikeOrigin(line)) continue;
+      for (const match of line.matchAll(/\b([A-Z][A-Z0-9_]{2,})\s*[=:]/g)) carriers.add(match[1]);
+    }
+    if (!carriers.size) {
+      problems.push({ level: 'fail', text: `${file} never computes a per-PR origin, so the preview cannot be the origin Clerk accepts tokens for.` });
+      continue;
+    }
+    // A preview that names a fixed origin is naming production's. The origin
+    // has to be derived from the pull request, or previews share a tenant
+    // boundary with prod and with each other.
+    const namesThePullRequest = line =>
+      /PR_NUMBER|pull_request\.number|github\.event\.number|PREVIEW_ID/i.test(line) ||
+      /\bpr-[^.\/\s"']+\./i.test(line);
+    const perPullRequest = body.split('\n').some(line => looksLikeOrigin(line) && namesThePullRequest(line));
+    if (!perPullRequest) {
+      problems.push({ level: 'fail', text: `${file} computes a preview origin that does not vary per pull request, so the preview answers for a shared -- in practice production's -- origin.` });
+      continue;
+    }
+    if (!azpDecision.length) {
+      // No server here to check an azp claim; the workflow half is all there is.
+      continue;
+    }
+    const routed = [...carriers].filter(name => goBodies.includes(name));
+    if (!routed.length) {
+      problems.push({ level: 'fail', text: `${file} computes a preview origin into ${[...carriers].sort().join(', ')}, but no Go source reads any of them, so the origin never reaches Clerk's authorized-party check.` });
     }
   }
   return problems;
@@ -233,7 +275,7 @@ export function checkAuthBoundary(root, declared) {
 
   const findings = [];
   findings.push(...noPublicBypassFlag(root, files).map(text => ({ level: 'fail', text })));
-  findings.push(...previewNamesItsOwnOrigin(root));
+  findings.push(...previewNamesItsOwnOrigin(root, files));
   if (declared.api) {
     findings.push(...bypassIsCompiledOut(root));
     findings.push(...keysDoNotCross(root).map(text => ({ level: 'fail', text })));
