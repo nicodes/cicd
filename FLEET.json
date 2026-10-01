@@ -90,7 +90,7 @@
   ],
   "baseline": {
     "note": "Slow-moving values only. Base image digests are deliberately absent: dependabot bumps those constantly and files the same bump in every product at once, so a table here would be wrong between the bump and somebody editing it. Digest agreement is what helpers/fleet-audit.py is for, run by an operator.",
-    "snapshot_revision": "47725405da42d2c5c5bfd8f695edc05114c365b0",
+    "snapshot_revision": "c3dc62802f146a3c69e12c4ec53a62882448a2c0",
     "komizo_actions_tag": "v0.0.24",
     "tools": {
       "shared": {
