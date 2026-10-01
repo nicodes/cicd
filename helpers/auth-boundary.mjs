@@ -88,12 +88,23 @@ function noProvider(root, files) {
 function bypassIsCompiledOut(root) {
   const go = sourceFiles(root, { extensions: ['.go'] })
     .filter(file => !file.endsWith('_test.go'));
+  // A file is the local path if it is BUILD-TAGGED for it. Matching on the
+  // identity string instead was wrong twice over: it depended on a product
+  // spelling a constant a particular way -- gdam writes
+  // "sk_test_local_development_only" with underscores where termcade uses a
+  // hyphen -- and it is the tag, not the string, that the rule is actually
+  // about.
+  const tagged = go.filter(file => /^\/\/go:build [^\n]*\blocaldev\b/m.test(read(root, file)) &&
+                                   !/^\/\/go:build [^\n]*!localdev/m.test(read(root, file)));
+  // An untagged file that hands out a development identity is the failure
+  // this rule exists for, whatever else the product does.
   const grants = go.filter(file => {
+    if (tagged.includes(file)) return false;
     const body = read(root, file);
-    return /(LOCAL_AUTH|_DEV\b|localdev)/.test(body) &&
-           /(dev[A-Za-z]*(ClerkID|UserID|Identity)|local-development|LOCAL_USER_ID)/.test(body);
+    return /(LOCAL_AUTH|_DEV\b)/.test(body) &&
+           /(dev[A-Za-z]*(ClerkID|UserID|Identity)|local[-_]development|LOCAL_USER_ID)/.test(body);
   });
-  if (!grants.length) {
+  if (!tagged.length && !grants.length) {
     // Passing here would be backwards. The contract says local development
     // uses no Clerk tenant; a product with no bypass at all meets that by
     // having no local path, which in practice means developers point a
@@ -106,8 +117,7 @@ function bypassIsCompiledOut(root) {
     }];
   }
   const problems = [];
-  const untagged = grants.filter(file => !/^\/\/go:build .*\blocaldev\b/m.test(read(root, file)));
-  for (const file of untagged) {
+  for (const file of grants) {
     problems.push({
       level: 'fail',
       text: `${file} grants a development identity but carries no \`//go:build localdev\` tag, ` +
