@@ -1,4 +1,5 @@
 import copy
+import tempfile
 import importlib.util
 import json
 from pathlib import Path
@@ -93,3 +94,50 @@ class UpstreamExemption(unittest.TestCase):
         self.assertTrue(scanner.is_upstream('usr/sbin/other', declared))
         self.assertFalse(scanner.is_upstream('usr/sbin/others', declared))
 
+
+
+class ForbiddenLiterals(unittest.TestCase):
+    """The artifact question source inspection cannot answer.
+
+    cazper is the case that proves it is a separate question: its
+    development identity is compiled out behind a build tag, every test
+    passes in both builds, and the string is still in the binary through a
+    seeding fixture whose code can never run. Reachable and present are not
+    the same property.
+    """
+
+    def binary(self, directory, contents):
+        path = Path(directory) / 'executable'
+        path.write_bytes(contents)
+        return path
+
+    def test_a_present_literal_is_found(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = self.binary(directory, b'\x7fELF\x00\x00dev_local_user\x00padding')
+            self.assertEqual(scanner.forbidden_strings(binary, ['dev_local_user']),
+                             ['dev_local_user'])
+
+    def test_an_absent_literal_is_not_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = self.binary(directory, b'\x7fELF\x00ordinary content\x00')
+            self.assertEqual(scanner.forbidden_strings(binary, ['dev_local_user']), [])
+
+    def test_every_present_literal_is_named_at_once(self):
+        """One run should report the whole problem, not the first of it."""
+        with tempfile.TemporaryDirectory() as directory:
+            binary = self.binary(directory, b'\x7fELFdev_local_user and clerk.local.invalid here')
+            self.assertEqual(
+                scanner.forbidden_strings(binary, ['clerk.local.invalid', 'dev_local_user', 'absent']),
+                ['clerk.local.invalid', 'dev_local_user'])
+
+    def test_it_reads_bytes_rather_than_decoding(self):
+        """A Go binary is not text; a literal is present or it is not."""
+        with tempfile.TemporaryDirectory() as directory:
+            binary = self.binary(directory, b'\x7fELF\xff\xfe\x80dev_local_user\x00\xc3\x28')
+            self.assertEqual(scanner.forbidden_strings(binary, ['dev_local_user']),
+                             ['dev_local_user'])
+
+    def test_nothing_forbidden_means_nothing_to_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = self.binary(directory, b'\x7fELFdev_local_user')
+            self.assertEqual(scanner.forbidden_strings(binary, []), [])
