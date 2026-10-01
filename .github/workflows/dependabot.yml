@@ -51,6 +51,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
+      - name: Check out the shared helpers this workflow runs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nicodes/cicd
+          ref: 34afb22317d29b109e712af7c74a7198cdb8ed1d # helpers this reusable workflow runs (bump-along rule, see README)
+          path: .cicd
+          persist-credentials: false
+          sparse-checkout: helpers/
+        timeout-minutes: 3
       - name: Apply the dependency review policy
         if: steps.metadata.outcome == 'success'
         id: policy
@@ -60,7 +69,7 @@ jobs:
           NEW_VERSION: ${{ steps.metadata.outputs.new-version }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           DEPENDENCY_GROUP: ${{ steps.metadata.outputs.dependency-group }}
-        run: python3 scripts/engineering/helpers/dependency-policy.py
+        run: python3 .cicd/helpers/dependency-policy.py
       - name: Wait for every check and merge the verified head
         if: steps.policy.outputs.eligible == 'true'
         env:
@@ -68,4 +77,4 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
           DISPATCH_TARGET: ${{ inputs.dispatch-target }}
-        run: python3 scripts/engineering/helpers/merge-checked.py
+        run: python3 .cicd/helpers/merge-checked.py
