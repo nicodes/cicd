@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const BASELINE_URL = process.env.FLEET_BASELINE_URL
+export const BASELINE_URL = process.env.FLEET_BASELINE_URL
   ?? 'https://raw.githubusercontent.com/nicodes/cicd/main/FLEET.json';
 // A product either vendors the snapshot or installs it; a migrating fleet
 // has both kinds at once, so each location is tried in turn. The pin record
@@ -147,7 +147,7 @@ export function gather(root) {
   };
 }
 
-async function fetchBaseline(url) {
+export async function fetchBaseline(url) {
   // Three tries. A consistency check that fails open on a flaky network is
   // the decorative gate this whole exercise is about; one that fails closed
   // on a blip is a check people learn to re-run without reading. Retry, then
