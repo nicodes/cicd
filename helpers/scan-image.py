@@ -83,8 +83,31 @@ def is_upstream(member, upstream):
     return norm(member) in {norm(p) for p in upstream}
 
 
-def scan(image, expected_go=None, upstream=()):
+def forbidden_strings(binary, forbidden):
+    """Which of these literals are present in a built executable.
+
+    The question source inspection cannot answer. A product can move its
+    development identity behind `//go:build localdev`, have every test pass
+    in both builds, and still ship the string -- cazper does, through a
+    seeding fixture whose code can never run. Whether the grant is reachable
+    is a different question from whether the artifact carries it, and only
+    the artifact can be asked the second one.
+
+    Read as bytes, not decoded: a Go binary is not text, and a literal is
+    present or it is not.
+    """
+    data = binary.read_bytes()
+    return sorted(value for value in forbidden if value.encode() in data)
+
+
+def scan(image, expected_go=None, upstream=(), forbidden=()):
     """Scan every Go executable in an image.
+
+    `forbidden` names string literals that must not appear in any executable
+    this organisation built -- a development identity, a local-only issuer
+    name. An upstream binary is exempt for the same reason it is exempt from
+    a reached advisory: it is somebody else's build and its contents are not
+    this repository's to change.
 
     `upstream` names paths inside the image that WE DID NOT BUILD -- a binary
     that arrived in somebody else's base image. They are still scanned and
@@ -148,6 +171,14 @@ def scan(image, expected_go=None, upstream=()):
                 if expected_go is not None and match[1] != expected_go and not trusted:
                     raise ValueError(f'{member.name}: built by Go {match[1]}, expected {expected_go}')
                 print(f'Scanning {member.name} in {identity}, built by Go {match[1]}', flush=True)
+                if forbidden and not trusted:
+                    present = forbidden_strings(binary, forbidden)
+                    if present:
+                        raise ValueError(
+                            f'{member.name}: the shipped executable carries '
+                            f'{", ".join(present)}. These are local-development literals and '
+                            f'a release must not contain them, however unreachable the code '
+                            f'that mentions them is.')
                 result = subprocess.run(['govulncheck', '-mode=binary', '-json', str(binary)],
                                         check=True, stdout=subprocess.PIPE, text=True, timeout=600)
                 verdict = judge_report(result.stdout)
@@ -169,8 +200,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('image')
     parser.add_argument('--expected-go')
+    parser.add_argument('--forbid', action='append', default=[], metavar='LITERAL',
+                        help='a string no executable this organisation built may contain, '
+                             'such as a development identity. Repeat for several.')
     parser.add_argument('--upstream', action='append', default=[], metavar='PATH',
                         help='a binary inside the image that we did not build; scanned and '
                              'reported, never fatal. Repeat for several.')
     args = parser.parse_args()
-    print(json.dumps(scan(args.image, args.expected_go, args.upstream), indent=2))
+    print(json.dumps(scan(args.image, args.expected_go, args.upstream, args.forbid), indent=2))
