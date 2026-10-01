@@ -1,16 +1,24 @@
+import json
 import re
 from pathlib import Path
 import unittest
 
 WORKFLOW = Path(__file__).parents[1] / 'templates' / 'pr-preview.yml'
 README = Path(__file__).parents[1] / 'templates' / 'README.md'
+FLEET = Path(__file__).parents[1] / 'FLEET.json'
 
 GUARD = 'github.event.pull_request.head.repo.full_name == github.repository'
 MARKER = '<!-- preview -->'
 COMPOSITE = 'nicodes/komizo-actions/preview'
-# The peeled commit of the v0.0.21 release tag of komizo-actions — NOT the
-# annotated tag object (d7cb0c07895eaa19361cd5fb9063e649a616f143).
-V0_0_21_PEELED = 'eaf9336958cc7d65532878fcf6fbaad0f9582f85'
+# The release the template pins is NOT written here. It used to be, as a
+# literal SHA with the version in the constant name and in the test name,
+# and it went stale the moment the fleet moved to v0.0.24 -- the template
+# then told every new adopter to pin two tags behind AND not to repin on
+# copy. The tag comes from the one place the fleet already agrees on it.
+KOMIZO_ACTIONS_TAG = json.loads(FLEET.read_text())['baseline']['komizo_actions_tag']
+# The annotated tag object of v0.0.21, which must never appear as a pin: a
+# `uses:` resolved to a tag object instead of its peeled commit fails.
+AN_ANNOTATED_TAG_OBJECT = 'd7cb0c07895eaa19361cd5fb9063e649a616f143'
 
 
 def job(text, name):
@@ -80,16 +88,35 @@ class PrPreviewTemplate(unittest.TestCase):
                          ['KOMIZO_KNOWN_HOSTS', 'KOMIZO_SERVER_URL'],
                          'the deploy composite\'s SSH env path, nothing else')
 
-    def test_composite_is_pinned_to_the_v0_0_21_peeled_commit(self):
+    def test_composite_is_pinned_to_the_fleets_current_release(self):
+        """Both jobs pin one SHA, and the comment names the release the
+        fleet is actually on. Checking against FLEET.json rather than a
+        literal means a fanout cannot leave the template behind."""
         uses = re.findall(rf'uses: {re.escape(COMPOSITE)}@([0-9a-f]{{40}})([^\n]*)', self.text)
         self.assertEqual(len(uses), 2, 'both jobs call the preview composite, SHA-pinned')
-        for sha, comment in uses:
-            self.assertEqual(sha, V0_0_21_PEELED,
-                             'the pin is the v0.0.21 peeled commit, never the annotated tag object')
-            self.assertIn('# v0.0.21', comment, 'the trailing comment names the release the SHA peels')
+        shas = {sha for sha, _ in uses}
+        self.assertEqual(len(shas), 1, f'both jobs pin ONE commit, got {sorted(shas)}')
+        for _, comment in uses:
+            self.assertIn(f'# {KOMIZO_ACTIONS_TAG}', comment,
+                          f'the trailing comment names the release the fleet is on '
+                          f'({KOMIZO_ACTIONS_TAG} per FLEET.json)')
             self.assertNotIn('placeholder', comment, 'the placeholder note is gone — the pin is real')
-        self.assertNotIn('d7cb0c07895eaa19361cd5fb9063e649a616f143', self.text,
-                         'the annotated tag object SHA must never appear as the pin')
+        self.assertNotIn(AN_ANNOTATED_TAG_OBJECT, self.text,
+                         'an annotated tag object SHA must never appear as the pin')
+
+    def test_the_readme_does_not_tell_adopters_to_keep_a_stale_pin(self):
+        """The README says not to repin on copy, which is only safe while
+        the shipped pin is current. If it names a release the fleet has
+        moved off, every new adoption starts behind and fails its own pin
+        check -- which is exactly what happened at v0.0.21."""
+        # Only the version in the do-not-repin instruction is checked. The
+        # README also says "Since v0.0.21 the up invocation must pass ...",
+        # which is a true statement about history and must not be flagged.
+        # \s+ because the sentence wraps across a line.
+        promised = re.findall(r'already ships the real\s+(v0\.0\.\d+) pin', README.read_text())
+        self.assertEqual(promised, [KOMIZO_ACTIONS_TAG],
+                         f'the README tells adopters not to repin on copy, so the pin it promises '
+                         f'must be the one the fleet is on ({KOMIZO_ACTIONS_TAG} per FLEET.json)')
 
     def test_up_wires_the_required_registry_credentials(self):
         """The composite fails closed if `up` lacks the registry
