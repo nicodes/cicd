@@ -83,7 +83,7 @@ export function compare(product, fleet, facts) {
   if (facts.usesKomizoActions) {
     if (!facts.hasPinRecord) {
       problems.push(`this product uses komizo-actions but has no ${PIN_RECORD}. ` +
-        `Bootstrap one: bun scripts/engineering/helpers/action-pins.mjs`);
+        `Bootstrap one: bun "$CICD_ENGINEERING"/helpers/action-pins.mjs`);
     }
     for (const [action, tag] of Object.entries(facts.actionPins)) {
       if (tag !== baseline.komizo_actions_tag) {

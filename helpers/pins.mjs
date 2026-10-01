@@ -166,7 +166,7 @@ for (const { file, uses } of cicdUses) {
   // change.
   const called = uses.slice('nicodes/cicd/'.length).split('@')[0];
   assert.equal(sha, snapshot.revision,
-    `${file}: calls ${called} at ${sha.slice(0, 8)} but this product vendors ${snapshot.revision.slice(0, 8)} — one product, two revisions of the same repository. Re-vendor and repin together.`);
+    `${file}: calls ${called} at ${sha.slice(0, 8)} but this product's snapshot is ${snapshot.revision.slice(0, 8)} — one product, two revisions of the same repository. Move both together.`);
 }
 
 // Product-owned, and deliberately not inside the snapshot: once the

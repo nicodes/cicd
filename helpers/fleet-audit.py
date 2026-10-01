@@ -29,14 +29,20 @@ so the tests exercise it without a network.
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CANONICAL_PIN_RECORD = 'scripts/engineering/ACTION-PINS.json'
+# A product either vendors the snapshot or installs it, and during the
+# migration the fleet has both. Each is read in its own way and then compared
+# on the same ground: the cicd COMMIT the product is running.
+CANONICAL_PIN_RECORDS = ('ACTION-PINS.json', 'scripts/engineering/ACTION-PINS.json')
+CANONICAL_PIN_RECORD = CANONICAL_PIN_RECORDS[0]
 SNAPSHOT = 'scripts/engineering/SOURCE.json'
+INSTALLED = re.compile(r'"http:cicd-engineering"\s*=\s*\{[^}]*?version\s*=\s*"([^"]+)"', re.S)
 
 
 class Finding:
@@ -92,17 +98,22 @@ def audit(facts, fleet):
     # The file LIST, not the hashes: SOURCE.json already pins the contents of
     # each file it names, and cannot say anything about a file it does not.
     # Five different subsets of the same snapshot all validated individually.
+    # Only among products that still vendor. One that installs the snapshot
+    # has no copied files, and reporting "0 files" against everyone else's 66
+    # would be a finding about the mechanism rather than about drift.
     found = disagreement('snapshot', 'vendored file set',
-                         {p: '%d files' % len(facts[p]['snapshot_files']) for p in products})
+                         {p: '%d files' % len(facts[p]['snapshot_files']) for p in products
+                          if facts[p]['snapshot_files'] is not None})
     if found:
         findings.append(found)
 
     # --- komizo-action pins -------------------------------------------
     wrong_place = [p for p in products
                    if facts[p]['uses_komizo_actions']
-                   and facts[p]['pin_record_path'] not in (CANONICAL_PIN_RECORD, None)]
+                   and facts[p]['pin_record_path'] not in CANONICAL_PIN_RECORDS + (None,)]
     if wrong_place:
-        findings.append(Finding('pins', f'pin record is not at {CANONICAL_PIN_RECORD}, so pins.mjs cannot read it',
+        findings.append(Finding('pins', 'pin record is somewhere pins.mjs does not look: '
+                                        f'it reads {" or ".join(CANONICAL_PIN_RECORDS)}',
                                 {'': wrong_place}, absolute=True))
     no_record = [p for p in products
                  if facts[p]['uses_komizo_actions'] and facts[p]['pin_record_path'] is None]
@@ -173,6 +184,22 @@ def gh_json(path):
     return json.loads(out.stdout)
 
 
+def release_commit(version, _cache={}):
+    """The commit a cicd release tag peels to, for comparing with a vendored revision.
+
+    An installed product declares a version; a vendored one records a commit.
+    They are the same fact in two notations, and resolving one into the other
+    is what lets a half-migrated fleet still be checked for agreement.
+
+    Peeled, not the tag object: an annotated tag and its commit are different
+    40-hex strings, and this value is compared as a string.
+    """
+    if version not in _cache:
+        got = gh_json(f'repos/nicodes/cicd/commits/v{version}')
+        _cache[version] = (got or {}).get('sha', '')[:10] or None
+    return _cache[version]
+
+
 def gh_file(repo, path, ref='HEAD'):
     got = gh_json(f'repos/{repo}/contents/{path}?ref={ref}')
     if got is None or 'content' not in got:
@@ -197,21 +224,35 @@ def read_product(repo):
     facts = {'snapshot_revision': None, 'snapshot_files': [], 'tools': {},
              'images': {}, 'action_pins': {}, 'pin_record_path': None,
              'uses_komizo_actions': False, 'runs_pin_gate': False,
-             'has_pin_gate': 'scripts/engineering/helpers/pins.mjs' in tree}
-
-    source = gh_file(repo, SNAPSHOT)
-    if source:
-        facts['snapshot_revision'] = json.loads(source).get('revision', '')[:10]
-    facts['snapshot_files'] = [p for p in tree if p.startswith('scripts/engineering/')]
+             'has_pin_gate': 'scripts/engineering/helpers/pins.mjs' in tree,
+             'snapshot_source': None}
 
     mise = gh_file(repo, '.mise.toml') or ''
+    installed = INSTALLED.search(mise)
+    source = gh_file(repo, SNAPSHOT)
+    if installed:
+        # The release tag is what the product declares; the commit is what
+        # the vendoring products declare. Compare on the commit, or a
+        # migrating fleet reads as a fleet in disagreement with itself.
+        facts['snapshot_source'] = 'installed'
+        facts['snapshot_revision'] = release_commit(installed.group(1))
+        # Nothing is copied in, so there is no file set to compare. Saying
+        # "0 files" against everyone else's 66 would be a finding about the
+        # mechanism, not about drift.
+        facts['snapshot_files'] = None
+        facts['has_pin_gate'] = True
+    elif source:
+        facts['snapshot_source'] = 'vendored'
+        facts['snapshot_revision'] = json.loads(source).get('revision', '')[:10]
+        facts['snapshot_files'] = [p for p in tree if p.startswith('scripts/engineering/')]
+
     for tool in ('go', 'bun', 'node', 'python', 'actionlint', 'shellcheck'):
         match = re.search(rf'^{tool}\s*=\s*"([^"]+)"', mise, re.M)
         if match:
             facts['tools'][tool] = match.group(1)
 
     # The pin record, wherever it is. Finding it somewhere else is a finding.
-    for candidate in (CANONICAL_PIN_RECORD, 'ACTION-PINS.json'):
+    for candidate in CANONICAL_PIN_RECORDS:
         if candidate in tree:
             facts['pin_record_path'] = candidate
             body = gh_file(repo, candidate)
