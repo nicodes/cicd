@@ -50,20 +50,34 @@ settings UI and enforces nothing.
 
 | scope | holds | the test |
 | --- | --- | --- |
-| organisation | nothing sensitive, ever | would a brand-new repository in this org want it on day one? |
+| organisation | a credential genuinely shared by several repositories, scoped with `visibility: selected` | do several repositories in this org need the same value? |
 | repository | non-sensitive and environment-independent | could this sit in a public README? |
 | environment | **everything sensitive, with no exceptions** | — |
 
-An organisation secret is readable by every repository in the organisation,
-which for `aviorstudio` is 48 of them. One product's key does not belong
-there.
+An organisation secret set to `visibility: all` is readable by every
+repository in the organisation, which for `aviorstudio` is 48 of them. That
+is the thing to avoid, not organisation level itself: GitHub also offers
+`visibility: selected`, which names the repositories that may read it. A
+shared credential kept once and scoped to its readers is better than the
+same value pasted into five environments, because there is one thing to
+rotate rather than five that can drift apart.
+
+So the rule at organisation level is `selected`, never `all`, for anything
+sensitive. `aviorstudio`'s backup credentials are already scoped this way,
+to exactly the three repositories that run a backup workflow -- gdam-be,
+fieldsofrevik and termcade-be. astry-be and cazper-be run backups too and
+keep their own copies, because they belong to other owners and no
+`aviorstudio` secret can reach them.
 
 There is one recorded exception. `GDAM_SECRET_KEY` sits at `aviorstudio`
 organisation level and stays there: it is not gdam-be's, despite the name.
 Fourteen `gd-*` library repositories read it in their `release.yml`, so it
 is a genuinely shared publishing credential, and the organisation is where
 a shared credential belongs -- moving it would mean fourteen copies to
-rotate in step, which is worse. It was nearly deleted during this migration
+rotate in step, which is worse. It is still `visibility: all`, which is the
+part to fix: it should name those fourteen. Changing a secret's visibility
+needs its value, which the API will not return, so that one is done in the
+settings UI. It was nearly deleted during this migration
 on the assumption that the name told the truth about the owner. It does
 not, and an exception nobody records is an exception somebody else
 removes.
@@ -166,10 +180,13 @@ database per pull request and injects the DSN itself. A DSN stored in GitHub
 would point every preview at one shared database, which is the opposite of
 what previews are for.
 
-**The backup S3 credentials are stored five times** rather than once at
-organisation level. That is the honest cost of the rule. The better answer is
-not an exception but a narrower credential: one scoped to the backup bucket,
-so where it lives matters less.
+**The backup S3 credentials are stored three times, not once.** Once at
+`aviorstudio` organisation level scoped to the three repositories there that
+run backups, and once each in astry-be and cazper-be, which belong to other
+owners an organisation secret cannot reach. An earlier draft of this
+document called for five copies and described that as the honest cost of
+the rule; it was not a cost, it was a missing feature -- `visibility:
+selected` had been there all along.
 
 ## Migrating
 
