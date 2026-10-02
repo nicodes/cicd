@@ -102,10 +102,12 @@ class Product:
         self.go('api/internal/clerkauth/local_auth.go', TAGGED_BYPASS)
         self.go('api/internal/config/local_auth_disabled.go', REFUSAL)
         self.workflow('pr-preview.yml',
-                      'jobs:\n  p:\n    steps:\n      - env:\n'
+                      'jobs:\n  p:\n    environment: Preview\n    steps:\n      - env:\n'
                       '          CLERK_SECRET_KEY_DEV: x\n'
                       '          CLERK_AUTHORIZED_PARTIES: https://pr-1.preview.example\n')
-        self.workflow('cd.yml', 'jobs:\n  d:\n    steps:\n      - env:\n          CLERK_SECRET_KEY_PROD: y\n')
+        self.workflow('cd.yml',
+                      'jobs:\n  d:\n    environment: Production\n    steps:\n'
+                      '      - env:\n          CLERK_SECRET_KEY_PROD: y\n')
         return self
 
 
@@ -193,14 +195,42 @@ class KeyRouting(unittest.TestCase):
             said = ' '.join(failures(check(directory, CLERK_API)))
             self.assertIn('both.yml', said)
 
-    def test_an_unsuffixed_secret_names_no_instance(self):
+    def test_a_clerk_secret_outside_an_environment_is_refused(self):
+        """The rule that replaced "the name carries a _DEV or _PROD suffix".
+        A suffix is a promise -- it can be wrong and the check still passes.
+        An environment is a mechanism: GitHub refuses a pull-request branch
+        asking for one whose branch policy is main."""
         with tempfile.TemporaryDirectory() as directory:
             product = Product(directory)
             product.go('api/internal/clerkauth/local_auth.go', TAGGED_BYPASS)
             product.go('api/internal/config/local_auth_disabled.go', REFUSAL)
             product.workflow('cd.yml', 'jobs:\n  d:\n    steps:\n      - env:\n          CLERK_SECRET_KEY: y\n')
             said = ' '.join(failures(check(directory, CLERK_API)))
-            self.assertIn('which instance', said)
+            self.assertIn('without declaring an environment', said)
+
+    def test_an_unsuffixed_secret_is_fine_inside_an_environment(self):
+        """The whole point of the change: CLERK_SECRET_KEY with no suffix is
+        the fleet's name now, and the environment says which instance."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory)
+            product.go('api/internal/clerkauth/local_auth.go', TAGGED_BYPASS)
+            product.go('api/internal/config/local_auth_disabled.go', REFUSAL)
+            product.workflow('cd.yml',
+                             'jobs:\n  d:\n    environment: Production\n    steps:\n'
+                             '      - env:\n          CLERK_SECRET_KEY: y\n')
+            said = ' '.join(failures(check(directory, CLERK_API)))
+            self.assertNotIn('environment', said)
+
+    def test_only_the_job_that_reads_the_secret_needs_one(self):
+        """A workflow may hold unrelated jobs; the rule is per job, not per
+        file, so an untouched lint job does not have to declare anything."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.workflow('cd.yml',
+                             'jobs:\n  lint:\n    steps:\n      - run: echo hi\n'
+                             '  d:\n    environment: Production\n    steps:\n'
+                             '      - env:\n          CLERK_SECRET_KEY: y\n')
+            self.assertEqual(failures(check(directory, CLERK_API)), [])
 
 
 class PreviewHalf(unittest.TestCase):
@@ -231,7 +261,7 @@ class PreviewHalf(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             product = Product(directory).compliant()
             product.workflow('pr-preview.yml',
-                             'jobs:\n  p:\n    steps:\n      - run: |\n'
+                             'jobs:\n  p:\n    environment: Preview\n    steps:\n      - run: |\n'
                              '          app_origin="https://pr-${PR_NUMBER}.preview.example"\n'
                              "          printf 'CORS_ALLOWED_ORIGINS=%s\\n' \"$app_origin\"\n"
                              '        env:\n          CLERK_SECRET_KEY_DEV: x\n')

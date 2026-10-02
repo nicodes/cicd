@@ -178,12 +178,49 @@ function keysDoNotCross(root) {
                     `boundary is the file rather than a condition inside it.`);
     }
   }
-  const everything = workflows.map(f => read(root, f)).join('\n');
-  if (/CLERK_SECRET_KEY\s*:/.test(everything) && !/CLERK_SECRET_KEY_(DEV|PROD)/.test(everything)) {
-    problems.push('a Clerk secret is wired with no _DEV or _PROD suffix, so nothing in the ' +
-                  'workflow says which instance it belongs to.');
+  // A job that reads a Clerk secret must declare an environment.
+  //
+  // This replaced "the name carries a _DEV or _PROD suffix". That rule asked
+  // the name to say which Clerk instance a value belonged to, and a name
+  // promises nothing -- the suffix could be wrong and the check would pass.
+  // An environment is a mechanism: GitHub refuses a pull-request branch that
+  // asks for an environment whose branch policy is main, so a preview cannot
+  // reach the production tenant's secret even by naming it. Once the
+  // environment carries the meaning, the suffix is redundant, and the fleet
+  // dropped it -- see docs/secrets.md.
+  for (const file of workflows) {
+    for (const [name, body] of jobsOf(read(root, file))) {
+      if (!CLERK_SECRET.test(body)) { CLERK_SECRET.lastIndex = 0; continue; }
+      CLERK_SECRET.lastIndex = 0;
+      if (!/^\s{4}environment:/m.test(body)) {
+        problems.push(`${file} job "${name}" reads a Clerk secret without declaring an ` +
+                      `environment:, so nothing decides which Clerk instance it may reach. ` +
+                      `Add environment: Production or environment: Preview to the job.`);
+      }
+    }
   }
   return problems;
+}
+
+/**
+ * The jobs of a workflow, as [name, body] pairs.
+ *
+ * Split textually rather than parsed: this file has no YAML dependency and
+ * runs against nine products' workflows, so it reads what is written rather
+ * than what a parser would normalise. A job key is two spaces deep under
+ * `jobs:`; its body runs to the next one.
+ */
+function jobsOf(text) {
+  const afterJobs = text.split(/^jobs:\s*$/m)[1];
+  if (!afterJobs) return [];
+  const out = [];
+  const starts = [...afterJobs.matchAll(/^  ([A-Za-z_][\w-]*):\s*$/gm)];
+  for (let i = 0; i < starts.length; i++) {
+    const from = starts[i].index + starts[i][0].length;
+    const to = i + 1 < starts.length ? starts[i + 1].index : afterJobs.length;
+    out.push([starts[i][1], afterJobs.slice(from, to)]);
+  }
+  return out;
 }
 
 /**
