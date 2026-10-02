@@ -58,6 +58,16 @@ An organisation secret is readable by every repository in the organisation,
 which for `aviorstudio` is 48 of them. One product's key does not belong
 there.
 
+There is one recorded exception. `GDAM_SECRET_KEY` sits at `aviorstudio`
+organisation level and stays there: it is not gdam-be's, despite the name.
+Fourteen `gd-*` library repositories read it in their `release.yml`, so it
+is a genuinely shared publishing credential, and the organisation is where
+a shared credential belongs -- moving it would mean fourteen copies to
+rotate in step, which is worse. It was nearly deleted during this migration
+on the assumption that the name told the truth about the owner. It does
+not, and an exception nobody records is an exception somebody else
+removes.
+
 A repository secret is readable by every workflow run in that repository,
 including pull requests. Declaring `environment:` on the deploying job does
 **not** fence a repository-level secret — environment scoping only protects
