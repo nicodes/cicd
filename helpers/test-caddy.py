@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and test the exact patched Caddy source in disposable local storage."""
+"""Build and test the exact Caddy source in disposable local storage."""
 from pathlib import Path
 import importlib.util
 import shutil
@@ -18,5 +18,5 @@ with tempfile.TemporaryDirectory(prefix='caddy-engineering-') as directory:
     report = subprocess.check_output(['govulncheck', '-mode=binary', '-json', str(root/'caddy')], text=True, timeout=600)
     verdict = scanner.judge_report(report)
     if verdict['reached']:
-        raise ValueError(f'patched Caddy has vulnerable linked symbols: {verdict["reached"]}')
-    print('Patched Caddy: upstream race tests and live binary vulnerability scan passed.')
+        raise ValueError(f'Caddy has vulnerable linked symbols: {verdict["reached"]}')
+    print('Caddy: upstream race tests and live binary vulnerability scan passed.')
