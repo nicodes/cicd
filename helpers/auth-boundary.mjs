@@ -247,8 +247,28 @@ function previewNamesItsOwnOrigin(root, files) {
   const problems = [];
   for (const file of workflows) {
     const body = read(root, file);
-    if (!/CLERK_SECRET_KEY_DEV/.test(body)) {
-      problems.push({ level: 'fail', text: `${file} deploys a preview without CLERK_SECRET_KEY_DEV; a preview must use the development instance.` });
+    // Two ways to name the development instance, and the contract is about
+    // WHICH INSTANCE a preview reaches rather than which spelling it uses.
+    //
+    //   1. secrets.CLERK_SECRET_KEY_DEV, a repository-level entry.
+    //   2. secrets.CLERK_SECRET_KEY read by a job that declares
+    //      environment: Preview -- that environment holds the development
+    //      instance on every product, and scoping it there is strictly
+    //      better: the value is behind the environment boundary instead of
+    //      readable by every job in the repository.
+    //
+    // The second is only safe BECAUSE of the environment declaration. The
+    // same expression in a job without one resolves at repository level,
+    // which is production's key, so that case is a failure and not a pass.
+    const usesDevName = /CLERK_SECRET_KEY_DEV/.test(body);
+    const previewScoped = [...jobsOf(body)].some(([, job]) =>
+      /secrets\.CLERK_SECRET_KEY(?!_)/.test(job) && /^\s{4}environment:\s*["']?[Pp]review\b/m.test(job));
+    const unscopedPlainKey = [...jobsOf(body)].some(([, job]) =>
+      /secrets\.CLERK_SECRET_KEY(?!_)/.test(job) && !/^\s{4}environment:/m.test(job));
+    if (unscopedPlainKey) {
+      problems.push({ level: 'fail', text: `${file} reads secrets.CLERK_SECRET_KEY in a job with no environment:, which resolves to the repository-level production key. Declare environment: Preview, or use CLERK_SECRET_KEY_DEV.` });
+    } else if (!usesDevName && !previewScoped) {
+      problems.push({ level: 'fail', text: `${file} deploys a preview without the development instance; use CLERK_SECRET_KEY_DEV, or read secrets.CLERK_SECRET_KEY from a job declaring environment: Preview.` });
     }
     // Names the workflow assigns a computed origin to, on one line:
     // `printf 'NAME=%s\n' "$app_origin"`, `NAME: ${{ ... }}.preview...`, etc.

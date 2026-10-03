@@ -244,6 +244,36 @@ class PreviewHalf(unittest.TestCase):
             said = ' '.join(failures(check(directory, CLERK_API)))
             self.assertIn('development instance', said)
 
+    def test_a_preview_scoped_to_the_preview_environment_is_accepted(self):
+        """The Preview environment holds the development tenant on every
+        product, so reading CLERK_SECRET_KEY from a job that declares it
+        names the same instance CLERK_SECRET_KEY_DEV does -- and keeps the
+        value behind the environment boundary rather than at repository
+        level, where every job in the repository can read it."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.workflow('pr-preview.yml',
+                             'jobs:\n  p:\n    environment: Preview\n    steps:\n'
+                             '      - env:\n'
+                             '          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}\n'
+                             '          CLERK_AUTHORIZED_PARTIES: https://pr-1.preview.example\n')
+            self.assertEqual(failures(check(directory, CLERK_API)), [])
+
+    def test_the_plain_key_without_an_environment_is_refused(self):
+        """Without the declaration the same expression resolves at
+        repository level, which is production's key. The environment is
+        what makes the shorter name safe, so its absence is a failure and
+        not a pass."""
+        with tempfile.TemporaryDirectory() as directory:
+            product = Product(directory).compliant()
+            product.workflow('pr-preview.yml',
+                             'jobs:\n  p:\n    steps:\n'
+                             '      - env:\n'
+                             '          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}\n'
+                             '          CLERK_AUTHORIZED_PARTIES: https://pr-1.preview.example\n')
+            said = ' '.join(failures(check(directory, CLERK_API)))
+            self.assertIn('resolves to the repository-level production key', said)
+
     def test_a_preview_that_names_no_origin_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             product = Product(directory).compliant()
