@@ -98,8 +98,14 @@ class PostgresRestoreBoundaries(unittest.TestCase):
         # missing one would surface as a KeyError deep inside a container run.
         for project, config in drill.POSTGRES_APPS.items():
             self.assertEqual(drill.BACKENDS[project], 'postgresql', project)
-            for key in ('runtime_role', 'dsn_file', 'dsn_variable', 'api_port', 'health_path', 'root', 'env'):
+            for key in ('runtime_role', 'dsn_file', 'api_port', 'health_path', 'root', 'env'):
                 self.assertIn(key, config, f'{project} is missing {key}')
+            # The serving DSN variable is NOT per product. It used to be, and
+            # the two entries disagreed; the constant is what makes that
+            # impossible rather than merely currently-false.
+            self.assertNotIn('dsn_variable', config,
+                             f'{project} names its own serving DSN variable; the fleet has one')
+        self.assertEqual(drill.SERVING_DSN_VARIABLE, 'RUNTIME_DATABASE_URL_FILE')
 
     def test_a_pocketbase_envelope_is_refused_by_a_postgresql_product(self):
         # No 'backend' key at all is how a PocketBase envelope reads.
