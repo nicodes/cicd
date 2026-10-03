@@ -119,7 +119,8 @@
       "preview": {
         "identity": "clerk",
         "instance": "development",
-        "secret": "CLERK_SECRET_KEY_DEV"
+        "secret": "CLERK_SECRET_KEY_DEV, or CLERK_SECRET_KEY read from the Preview environment",
+        "note": "Either spelling names the development instance. The environment-scoped form is preferred: the Preview environment holds the development tenant on every product, and reading it there keeps the value behind the environment boundary instead of at repository level where every job can read it. It is only valid from a job that declares environment: Preview -- without one the same expression resolves to the repository-level production key, and helpers/auth-boundary.mjs fails that case."
       },
       "production": {
         "identity": "clerk",
