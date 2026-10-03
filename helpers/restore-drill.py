@@ -51,11 +51,20 @@ BACKENDS = {'ormos': 'pocketbase', 'cazper': 'postgresql', 'komizo': 'pocketbase
 # one `docker inspect` away from a log. Blobs get their own tmpfs because the
 # serving path stats the directory rather than creating it -- under /tmp it
 # would not exist, and the API would refuse to start for the wrong reason.
+# The one name the fleet uses for the serving DSN, for every product.
+#
+# This was a per-product key, and cazper's entry said CAZPER_DATABASE_URL_FILE
+# while termcade's said RUNTIME_DATABASE_URL_FILE -- the same slot under two
+# names, with a table here to keep track of which product meant which. The
+# knob is gone rather than corrected: a per-product setting is what let the
+# two drift, and nothing is served by being able to spell this differently
+# per product.
+SERVING_DSN_VARIABLE = 'RUNTIME_DATABASE_URL_FILE'
+
 POSTGRES_APPS = {
     'cazper': {
         'runtime_role': 'cazper_runtime',
         'dsn_file': '/run/secrets/database.url',
-        'dsn_variable': 'CAZPER_DATABASE_URL_FILE',
         'blobs': '/blobs',
         'api_port': 8080,
         'health_path': '/health',
@@ -66,7 +75,6 @@ POSTGRES_APPS = {
     'termcade': {
         'runtime_role': 'termcade_runtime',
         'dsn_file': '/run/secrets/database.url',
-        'dsn_variable': 'RUNTIME_DATABASE_URL_FILE',
         'api_port': 8080,
         'health_path': '/healthz',
         'root': '/srv/public/app',
@@ -189,7 +197,7 @@ def postgres_drill(project, export, key, pull=False):
 
                 environment = root/'clone.env'
                 environment.write_text(''.join(f'{name}={value}\n' for name, value in
-                                               {**config['env'], config['dsn_variable']: config['dsn_file']}.items()))
+                                               {**config['env'], SERVING_DSN_VARIABLE: config['dsn_file']}.items()))
                 environment.chmod(0o600)
                 api = prefix+'-api'
                 containers.append(api)
