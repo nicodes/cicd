@@ -74,6 +74,18 @@ jobs:
         with:
           user: "${{ inputs.user }}"
         timeout-minutes: 3
+      # The product's export script sources scripts/engineering-env.sh, which
+      # since the 2026-10-01 fleet change resolves the helpers through mise
+      # rather than a vendored copy. CD got this step in the same change; this
+      # workflow did not, so every nightly backup since has died on
+      # "mise: command not found" -- five products, three days, no snapshot.
+      # The scheduled run is the only caller, so no pull request could have
+      # caught it.
+      - name: Install and locate the engineering snapshot
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: http:cicd-engineering
+        timeout-minutes: 5
       - name: Verify and encrypt the pre-deploy snapshot
         timeout-minutes: 15
         run: bash scripts/export-backup.sh
